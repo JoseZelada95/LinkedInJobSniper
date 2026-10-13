@@ -19,25 +19,55 @@ from pypdf import PdfReader
 load_dotenv()
 
 # ── Config ────────────────────────────────────────────────
+# Perfil: Jose Alexander Zelada Aviles - Backend .NET Developer, Madrid
+# Estrategia dual: Línea A (Mid/Senior .NET) + Línea B (Junior/.NET/Java)
 SEARCH_TERMS = [
-    "Junior Product Manager",
-    "Graduate Finance Analyst",
-    "Junior Business Analyst",
-    "Graduate Operations Analyst",
-    "Junior Data Analyst",
-    "Graduate Scheme Finance",
-    "Associate Product Manager",
-    "Strategy and Operations Analyst",
-    "GTM Associate",
-    "Operations Associate",
-    "Graduate Customer Success Manager",
-    "Business Development Associate",
-    "Graduate Consultant",
+    # ── Línea A: Mid/Senior .NET (experiencia 2015-2024) ──
+    "Desarrollador .NET",
+    "Backend .NET Developer",
+    "Desarrollador Backend C#",
+    "ASP.NET Developer",
+    ".NET Developer",
+    "Analista .NET",
+    "Desarrollador C# .NET Core",
+    "Desarrollador Full Stack .NET",
+    "C# ASP.NET Developer",
+    "Desarrollador Web API .NET",
+    "Entity Framework Developer",
+    "Desarrollador Blazor",
+    "VB.NET Developer",
+    "Desarrollador SQL Server",
+    "SQL Developer T-SQL",
+    "Desarrollador Azure .NET",
+    "Azure Developer",
+    "Desarrollador Microservicios",
+    "Backend Developer C#",
+    "Software Engineer .NET",
+    "C# Developer Spain",
+    # ── Nichos (experiencia previa) ──
+    "Analista de Aplicaciones",
+    "E-commerce Developer .NET",
+    # ── Línea B: Junior/Prácticas (brecha + FP en curso) ──
+    "Junior .NET Developer",
+    "Junior C# Developer",
+    "Desarrollador Junior .NET",
+    "Becario .NET",
+    "Prácticas .NET Desarrollador",
+    "Junior Backend Developer",
+    "Junior Full Stack",
+    # ── Línea Java (curso Spring Boot en curso) ──
+    "Junior Java Developer",
+    "Java Spring Boot Developer",
+    "Desarrollador Java Junior",
+    "Java Backend Developer",
+    # ── Roles puente ──
+    "Soporte Técnico .NET",
+    "Analista Junior",
 ]
-LOCATIONS        = ["London, England"]
+LOCATIONS        = ["Madrid, Spain", "Madrid, España", "Remote"]
 RESULT_LIMIT     = 8
-HOURS_OLD        = 24
-SCORE_THRESHOLD  = int(os.getenv("SCORE_THRESHOLD", "45"))
+HOURS_OLD        = 48
+SCORE_THRESHOLD  = int(os.getenv("SCORE_THRESHOLD", "50"))
 TAILOR_THRESHOLD = 75
 PROXY_URL        = os.getenv("PROXY_URL") or None
 RESUME           = os.getenv("RESUME_TEXT") or None
@@ -98,21 +128,31 @@ class JobEvaluation(BaseModel):
 
 structured_llm = llm.with_structured_output(JobEvaluation, method="json_mode")
 
-system_template = """You are an expert career coach. Evaluate how well a job description matches a candidate's resume.
+system_template = """You are an expert career coach for the Spanish job market. Evaluate how well a job description matches a candidate's resume.
 Return a score (0-100), years of experience required, and a one-sentence reason.
 If YoE is not mentioned, return "Not Specified".
 
+CANDIDATE CONTEXT: Backend .NET Developer in Madrid, Spain. 10+ years total experience (2015-2024) in .NET/C#/SQL Server
+with a recent ~2-year gap (2024-2026) dedicated to relocation to Spain + retraining (FP DAM degree in progress,
+Java Spring Boot course). The candidate accepts BOTH lines:
+- LINE A (preferred): Mid/Senior .NET roles (30-45k EUR)
+- LINE B (acceptable): Junior/Practicas .NET or Java roles (22-30k EUR) for re-incorporation
+
 Scoring criteria:
-1. Skill Match (50%): Alignment of required skills with resume.
-2. Seniority Fit (30%): Is this an entry-level/graduate role suitable for the candidate?
-3. Domain Fit (20%): Does the industry/function match the candidate's background?
+1. Skill Match (50%): Alignment of required skills with resume (.NET, C#, ASP.NET, SQL Server are core).
+2. Seniority Fit (30%): Mid/Senior = LINE A. Junior/Becario = LINE B. Both are acceptable fits.
+3. Domain Fit (20%): Industry match with banking, e-commerce, education, consulting background.
+
+Location: Madrid, Spain or Remote. Penalise only if exclusively on-site outside Madrid.
+Language: Candidate has English B1 - penalise only if C2/Fluent is mandatory.
+Do NOT penalise the 2024-2026 gap - it is explained by retraining.
 
 Respond in JSON format with keys: score, reason, yoe.
 """ + CRITERIA
 
 eval_prompt = ChatPromptTemplate.from_messages([
     ("system", system_template),
-    ("user", "RESUME:\n{resume}\n\nJOB TITLE: {title}\nJOB DESCRIPTION:\n{description}\n\nBe strict. Penalise roles requiring 3+ years experience.")
+    ("user", "RESUME:\n{resume}\n\nJOB TITLE: {title}\nJOB DESCRIPTION:\n{description}\n\nScore strictly but fairly. Consider both LINE A (Mid/Senior) and LINE B (Junior) matches.")
 ])
 evaluation_chain = eval_prompt | structured_llm
 
@@ -147,7 +187,7 @@ def get_jobs_data(location: str, search_term: str) -> pd.DataFrame:
     for attempt in range(1, 4):
         try:
             jobs = scrape_jobs(
-                site_name=["linkedin"],
+                site_name=["linkedin", "indeed", "glassdoor"],
                 search_term=search_term,
                 location=location,
                 results_wanted=RESULT_LIMIT,
@@ -227,7 +267,7 @@ def send_email(top_jobs: List[dict]):
     sender   = os.getenv("EMAIL_SENDER")
     password = os.getenv("EMAIL_PASSWORD")
     receiver = os.getenv("EMAIL_RECEIVER")
-    subject  = f"Job Sniper: {len(top_jobs)} Matches for {datetime.now().strftime('%d %b %Y')}"
+    subject  = f"[Búsqueda Empleo] {len(top_jobs)} ofertas .NET Madrid - {datetime.now().strftime('%d/%m/%Y')}"
 
     rows = ""
     for job in top_jobs:
@@ -260,8 +300,8 @@ def send_email(top_jobs: List[dict]):
         sheets_note = f'<p style="font-size:12px;color:#555;">📊 All jobs exported to <a href="https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}">your tracking sheet</a> — mark Applied when done!</p>'
 
     html = f"""<html><body style="font-family:Arial,sans-serif;max-width:900px;margin:auto;">
-        <h2 style="color:#2c3e50;">🎯 LinkedIn Job Sniper — Daily Report</h2>
-        <p><b>{len(top_jobs)}</b> roles scored ≥{SCORE_THRESHOLD} today · ✨ = tailored CV bullets included</p>
+        <h2 style="color:#2c3e50;">🎯 Búsqueda de Empleo Diaria — Resultados</h2>
+        <p><b>{len(top_jobs)}</b> ofertas puntuadas ≥{SCORE_THRESHOLD} hoy · Línea A (Mid/Senior .NET) + Línea B (Junior/Prácticas) · ✨ = bullets CV personalizados</p>
         {sheets_note}
         <table style="border-collapse:collapse;width:100%;">
             <tr style="background:#f8f9fa;">
@@ -333,16 +373,16 @@ def main():
 
     # 3. Sort, tailor, export & send
     scored_jobs.sort(key=lambda x: x['score'], reverse=True)
-    top_15 = scored_jobs[:15]
+    top_20 = scored_jobs[:20]
 
-    for job in top_15:
+    for job in top_20:
         if job['score'] >= TAILOR_THRESHOLD:
             print(f"  ✨ Tailoring CV for: {job['title']} @ {job['company']}")
             job['tailored_bullets'] = tailor_resume_for_job(job['title'], job['description'])
 
-    export_to_sheets(top_15)
-    print(f"\n{len(top_15)} jobs above threshold. Sending email...")
-    send_email(top_15)
+    export_to_sheets(top_20)
+    print(f"\n{len(top_20)} jobs above threshold. Sending email...")
+    send_email(top_20)
 
 if __name__ == "__main__":
     main()
