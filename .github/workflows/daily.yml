@@ -3,19 +3,17 @@ name: Daily Career Scout
 # Triggers
 on:
   schedule:
-    # Runs at 08:00 UTC daily (8am London in winter; 9am London in summer/BST)
-    - cron: '0 8 * * *'
+    # 07:00 UTC = 08:00 Madrid (invierno) / 09:00 Madrid (verano)
+    - cron: '0 7 * * *'
   # Allows manual triggering via the 'Run workflow' button (for testing)
   workflow_dispatch:
 
 jobs:
   run-agent:
     runs-on: ubuntu-latest
-    # Optional: use a GitHub Environment (Settings → Environments) for secrets; else uses repo Actions secrets
-    # environment: JobSniperEnvVar
 
     steps:
-      # 1. Checkout code from repository (including the resumes folder)
+      # 1. Checkout code from repository
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -33,7 +31,7 @@ jobs:
 
       # 4. Run the main script
       - name: Run Job Agent
-        # CRITICAL: Inject GitHub Secrets. For Groq (free): API_KEY=groq_xxx, API_BASE=https://api.groq.com/openai/v1, LLM_MODEL=llama-3.1-8b-instant
+        # Groq (free): API_KEY=gsk_xxx, API_BASE=https://api.groq.com/openai/v1, LLM_MODEL=llama-3.3-70b-versatile
         env:
           API_KEY: ${{ secrets.API_KEY }}
           API_BASE: ${{ secrets.API_BASE }}
@@ -44,6 +42,8 @@ jobs:
           PROXY_URL: ${{ secrets.PROXY_URL }}
           RESUME_TEXT: ${{ secrets.RESUME_TEXT }}
           CRITERIA: ${{ secrets.CRITERIA }}
+          SCORE_THRESHOLD: ${{ secrets.SCORE_THRESHOLD }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
           RESUME_FILE_ID: ${{ secrets.RESUME_FILE_ID }}
         run: python main.py
