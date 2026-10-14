@@ -119,14 +119,16 @@ if not API_KEY:
     raise SystemExit("ERROR: No API_KEY set in .env")
 
 # ── LLM setup ─────────────────────────────────────────────
-llm = ChatOpenAI(model=LLM_MODEL, api_key=API_KEY, base_url=BASE_URL, temperature=0)
+FALLBACK_MODELS = [
+    LLM_MODEL,                  # Primero intenta el modelo configurado en el Secret
+    "llama-3.3-70b-versatile",  # Primer respaldo potente
+    "llama-3.1-8b-instant"      # Segundo respaldo rápido
+]
 
 class JobEvaluation(BaseModel):
     score:  int = Field(description="Relevance score 0-100 based on resume match.")
     reason: str = Field(description="One-sentence reason for the score.")
     yoe:    str = Field(description="Years of experience required, or 'Not Specified'.")
-
-structured_llm = llm.with_structured_output(JobEvaluation, method="json_mode")
 
 system_template = """You are an expert career coach for the Spanish job market. Evaluate how well a job description matches a candidate's resume.
 Return a score (0-100), years of experience required, and a one-sentence reason.
@@ -154,11 +156,8 @@ eval_prompt = ChatPromptTemplate.from_messages([
     ("system", system_template),
     ("user", "RESUME:\n{resume}\n\nJOB TITLE: {title}\nJOB DESCRIPTION:\n{description}\n\nScore strictly but fairly. Consider both LINE A (Mid/Senior) and LINE B (Junior) matches.")
 ])
-evaluation_chain = eval_prompt | structured_llm
 
-# — Tailoring model —
-tailor_llm = ChatOpenAI(model=LLM_MODEL, api_key=API_KEY, base_url=BASE_URL, temperature=0.4)
-
+# — Tailoring model setup —
 tailor_prompt = ChatPromptTemplate.from_messages([
     ("system", """You are an expert CV writer. Given a resume and a job description, rewrite 3-4 of the
 most relevant bullet points from the candidate's experience to better mirror the job's language and keywords.
@@ -166,20 +165,22 @@ Keep the same facts — do NOT invent achievements or numbers. Output ONLY the r
 short HTML unordered list (<ul><li>...</li></ul>). No preamble, no explanation."""),
     ("user", "RESUME:\n{resume}\n\nJOB TITLE: {title}\nJOB DESCRIPTION:\n{description}")
 ])
-tailor_chain = tailor_prompt | tailor_llm
 
 def tailor_resume_for_job(title: str, description: str) -> str:
-    try:
-        result = tailor_chain.invoke({
-            "resume":      RESUME[:2000],
-            "title":       title,
-            "description": description[:1500]
-        })
-        return result.content.strip()
-    except Exception as e:
-        print(f"  Tailoring failed for '{title}': {e}")
-        return ""
-
+    for model_name in FALLBACK_MODELS:
+        try:
+            current_tailor_llm = ChatOpenAI(model=model_name, api_key=API_KEY, base_url=BASE_URL, temperature=0.4)
+            tailor_chain = tailor_prompt | current_tailor_llm
+            result = tailor_chain.invoke({
+                "resume":      RESUME[:2000],
+                "title":       title,
+                "description": description[:1500]
+            })
+            return result.content.strip()
+        except Exception as e:
+            continue
+    print(f"  Tailoring failed for '{title}' on all models")
+    return ""
 # ── Scraping ──────────────────────────────────────────────
 def get_jobs_data(location: str, search_term: str) -> pd.DataFrame:
     proxies = [PROXY_URL] if PROXY_URL else None
@@ -221,16 +222,24 @@ def fetch_missing_description(url: str) -> str:
 def evaluate_job(title: str, description: str) -> dict:
     if not description or len(str(description)) < 50:
         return {"score": 0, "reason": "No description", "yoe": "N/A"}
-    try:
-        result = evaluation_chain.invoke({
-            "resume":      RESUME[:2000],
-            "title":       title,
-            "description": description[:1500]
-        })
-        return {"score": result.score, "reason": result.reason, "yoe": result.yoe}
-    except Exception as e:
-        print(f"  AI error for '{title}': {e}")
-        return {"score": 0, "reason": "AI Error", "yoe": "N/A"}
+        
+    for model_name in FALLBACK_MODELS:
+        try:
+            current_llm = ChatOpenAI(model=model_name, api_key=API_KEY, base_url=BASE_URL, temperature=0)
+            structured_current_llm = current_llm.with_structured_output(JobEvaluation, method="json_mode")
+            chain = eval_prompt | structured_current_llm
+            
+            result = chain.invoke({
+                "resume":      RESUME[:2000],
+                "title":       title,
+                "description": description[:1500]
+            })
+            return {"score": result.score, "reason": result.reason, "yoe": result.yoe}
+        except Exception as e:
+            # Si falla un modelo, pasa silenciosamente al siguiente de la lista de respaldo
+            continue
+            
+    return {"score": 0, "reason": "AI Error", "yoe": "N/A"}
 
 # ── Google Sheets export ──────────────────────────────────
 def get_sheets_service():
