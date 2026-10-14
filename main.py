@@ -255,8 +255,53 @@ def get_sheets_service():
 
 
 def export_to_sheets(jobs: List[dict]):
-    """Sheets export disabled by configuration."""
-    return
+    """Export job data to Google Sheets tracking spreadsheet."""
+    if not GOOGLE_SHEET_ID:
+        print("GOOGLE_SHEET_ID not set — skipping Sheets export.")
+        return
+
+    service = get_sheets_service()
+    if not service:
+        return
+
+    try:
+        rows = []
+        today = datetime.now().strftime("%d/%m/%Y")
+        for job in jobs:
+            match_pct = f"{job['score']}%"
+            salary = ""
+            desc_lower = job.get('description', '').lower()
+            import re
+            salary_match = re.search(r'(\d{2,3}[\.\s]?\d{3})\s*(?:€|eur|k)', desc_lower)
+            if salary_match:
+                salary = salary_match.group(1) + "k"
+
+            rows.append([
+                today,                       # Fecha
+                job.get('company', ''),      # Empresa
+                job.get('title', ''),        # Puesto
+                "Madrid / Remote",           # Ubicación
+                match_pct,                   # Match %
+                salary,                      # Salario
+                job.get('job_url', ''),      # URL Oferta
+                "Nuevo",                     # Estado
+                job.get('reason', '')[:200], # Notas
+                "Drive CV"                   # CV Usado
+            ])
+
+        body = {"values": rows}
+        result = service.spreadsheets().values().append(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range="A:J",
+            valueInputOption="USER_ENTERED",
+            insertDataOption="INSERT_ROWS",
+            body=body
+        ).execute()
+
+        print(f"✅ Exported {len(rows)} jobs to Google Sheets")
+
+    except Exception as e:
+        print(f"❌ Sheets export failed: {e}")
 
 
 # ── Email ─────────────────────────────────────────────────
