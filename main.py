@@ -13,7 +13,7 @@ from jobspy import scrape_jobs
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pypdf import PdfReader
 
 from pdf_tailor import tailor_pdf_for_job, sanitize_filename
@@ -235,6 +235,14 @@ class JobEvaluation(BaseModel):
     reason: str = Field(description="One-sentence reason for the score.")
     yoe:    str = Field(description="Years of experience required, or 'Not Specified'.")
 
+    @field_validator("yoe", mode="before")
+    @classmethod
+    def _coerce_yoe(cls, v):
+        # El LLM devuelve yoe como int a veces (5, 10) — forzar string
+        if v is None or v == "":
+            return "Not Specified"
+        return str(v)
+
 structured_llm = llm.with_structured_output(JobEvaluation, method="json_mode")
 
 system_template = """You are an expert career coach for the Spanish job market. Evaluate how well a job description matches a candidate's resume.
@@ -278,16 +286,22 @@ short HTML unordered list (<ul><li>...</li></ul>). No preamble, no explanation."
 tailor_chain = tailor_prompt | tailor_llm
 
 def tailor_resume_for_job(title: str, description: str) -> str:
-    try:
-        result = tailor_chain.invoke({
-            "resume":      RESUME[:2000],
-            "title":       title,
-            "description": description[:1500]
-        })
-        return result.content.strip()
-    except Exception as e:
-        print(f"  Tailoring failed for '{title}': {e}")
-        return ""
+    for attempt in range(1, 3):
+        try:
+            result = tailor_chain.invoke({
+                "resume":      RESUME[:1500],
+                "title":       title,
+                "description": description[:1200]
+            })
+            return result.content.strip()
+        except Exception as e:
+            if _is_rate_limit(e) and attempt < 2:
+                print(f"  Rate limit tailoring, retry in 15s: '{title}'")
+                time.sleep(15)
+                continue
+            print(f"  Tailoring failed for '{title}': {e}")
+            return ""
+    return ""
 
 # ── Scraping ──────────────────────────────────────────────
 def get_jobs_data(location: str, search_term: str) -> pd.DataFrame:
@@ -327,19 +341,30 @@ def fetch_missing_description(url: str) -> str:
     return ""
 
 # ── Evaluation ────────────────────────────────────────────
+def _is_rate_limit(err: Exception) -> bool:
+    return "429" in str(err) or "rate_limit" in str(err).lower()
+
+
 def evaluate_job(title: str, description: str) -> dict:
     if not description or len(str(description)) < 50:
         return {"score": 0, "reason": "No description", "yoe": "N/A"}
-    try:
-        result = evaluation_chain.invoke({
-            "resume":      RESUME[:2000],
-            "title":       title,
-            "description": description[:1500]
-        })
-        return {"score": result.score, "reason": result.reason, "yoe": result.yoe}
-    except Exception as e:
-        print(f"  AI error for '{title}': {e}")
-        return {"score": 0, "reason": "AI Error", "yoe": "N/A"}
+    for attempt in range(1, 4):
+        try:
+            result = evaluation_chain.invoke({
+                "resume":      RESUME[:1500],
+                "title":       title,
+                "description": description[:1200]
+            })
+            return {"score": result.score, "reason": result.reason, "yoe": result.yoe}
+        except Exception as e:
+            if _is_rate_limit(e) and attempt < 3:
+                wait = 10 * attempt
+                print(f"  Rate limit, retry {attempt}/3 in {wait}s: '{title}'")
+                time.sleep(wait)
+                continue
+            print(f"  AI error for '{title}': {e}")
+            return {"score": 0, "reason": "AI Error", "yoe": "N/A"}
+    return {"score": 0, "reason": "AI Rate Limited", "yoe": "N/A"}
 
 # ── Google Sheets export ──────────────────────────────────
 def get_sheets_service():
