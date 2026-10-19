@@ -127,10 +127,10 @@ SIN explicaciones, SIN preámbulo, SIN markdown.""",
     try:
         result = chain.invoke(
             {
-                "resume": resume_text[:2500],
+                "resume": resume_text[:1500],
                 "title": job_title,
                 "company": company,
-                "description": description[:1500],
+                "description": description[:1200],
             }
         )
         bullets = result.content.strip()
