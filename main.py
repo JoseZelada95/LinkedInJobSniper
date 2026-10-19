@@ -313,11 +313,13 @@ def get_jobs_data(location: str, search_term: str) -> pd.DataFrame:
                 site_name=["linkedin", "indeed", "glassdoor"],
                 search_term=search_term,
                 location=location,
+                country_indeed="Spain",
                 results_wanted=RESULT_LIMIT,
                 hours_old=HOURS_OLD,
                 proxies=proxies
             )
-            print(f"  → {len(jobs)} jobs scraped")
+            n_sites = jobs["site"].value_counts().to_dict() if not jobs.empty else {}
+            print(f"  → {len(jobs)} jobs scraped {n_sites if n_sites else ''}")
             return jobs
         except Exception as e:
             print(f"  Attempt {attempt} failed: {e}")
@@ -428,7 +430,10 @@ def send_email(top_jobs: List[dict], pdf_attachments: List[tuple] = None):
         rows += f"""
         <tr>
             <td style="padding:10px;border-bottom:1px solid #eee;font-weight:bold;color:{score_color};">{job['score']}</td>
-            <td style="padding:10px;border-bottom:1px solid #eee;">{job['title']}</td>
+            <td style="padding:10px;border-bottom:1px solid #eee;">
+                <a href="{job['job_url']}" style="color:#0a66c2;text-decoration:none;font-weight:bold;">{job['title']}</a>
+                <div style="font-size:11px;color:#888;margin-top:2px;">{job['site']}</div>
+            </td>
             <td style="padding:10px;border-bottom:1px solid #eee;">{job['company']}</td>
             <td style="padding:10px;border-bottom:1px solid #eee;">{job['yoe']}</td>
             <td style="padding:10px;border-bottom:1px solid #eee;font-size:13px;color:#555;">{job['reason']}</td>
@@ -523,6 +528,7 @@ def main():
             scored_jobs.append({
                 "title":            title,
                 "company":          row.get('company', 'Unknown'),
+                "site":             row.get('site', '?'),
                 "job_url":          job_url,
                 "score":            result['score'],
                 "reason":           result['reason'],
