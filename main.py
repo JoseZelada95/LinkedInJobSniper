@@ -304,9 +304,111 @@ def tailor_resume_for_job(title: str, description: str) -> str:
     return ""
 
 # ── Scraping ──────────────────────────────────────────────
+# Scrapers propios para portales españoles no cubiertos por jobspy
+SCRAPER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept-Language": "es-ES,es;q=0.9",
+}
+# Códigos de provincia: InfoJobs usa INE (28=Madrid); Tecnoempleo usa propios (263=Madrid)
+IJ_PROVINCES = {"madrid, spain": "28", "madrid, españa": "28"}
+TE_PROVINCES = {"madrid, spain": "263", "madrid, españa": "263"}
+
+
+_IJ_BLOCKED = False  # circuit-breaker: si InfoJobs sirve captcha, no insistir
+
+
+def scrape_infojobs(search_term: str, location: str, limit: int = 8) -> pd.DataFrame:
+    """Scraper propio de InfoJobs (list.xhtml, server-rendered)."""
+    global _IJ_BLOCKED
+    if _IJ_BLOCKED:
+        return pd.DataFrame()
+    from urllib.parse import urlencode
+    params = {"palabra": search_term}
+    prov = IJ_PROVINCES.get(location.lower().strip())
+    if prov:
+        params["of_provincia"] = prov
+    url = "https://www.infojobs.net/jobsearch/search-results/list.xhtml?" + urlencode(params)
+    try:
+        r = requests.get(url, headers=SCRAPER_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        print(f"  InfoJobs error: {e}")
+        return pd.DataFrame()
+    # Detección de bloqueo/captcha: página corta sin tarjetas
+    if "captcha" in r.text.lower() or len(r.text) < 40000:
+        _IJ_BLOCKED = True
+        print("  InfoJobs: posible captcha/bloqueo — se omite este portal el resto del run")
+        return pd.DataFrame()
+    soup = BeautifulSoup(r.text, "html.parser")
+    rows = []
+    for card in soup.select("div.ij-OfferCardContent")[:limit]:
+        link = card.select_one("a.ij-OfferCardContent-description-link")
+        comp = card.select_one("h3.ij-OfferCardContent-description-subtitle a")
+        desc = card.select_one("p.ij-OfferCardContent-description-description")
+        if not link or not link.get("href"):
+            continue
+        href = link["href"]
+        if href.startswith("//"):
+            href = "https:" + href
+        rows.append({
+            "site":        "infojobs",
+            "title":       (link.get("aria-label") or link.get_text(strip=True)),
+            "company":     comp.get_text(strip=True) if comp else "Unknown",
+            "job_url":     href.split("?")[0],
+            "location":    location,
+            "description": desc.get_text(" ", strip=True) if desc else "",
+        })
+    print(f"  → InfoJobs: {len(rows)} ofertas")
+    return pd.DataFrame(rows)
+
+
+def scrape_tecnoempleo(search_term: str, location: str, limit: int = 8) -> pd.DataFrame:
+    """Scraper propio de Tecnoempleo."""
+    from urllib.parse import urlencode
+    params = {"te": search_term}
+    prov = TE_PROVINCES.get(location.lower().strip())
+    if prov:
+        params["pr"] = prov
+    url = "https://www.tecnoempleo.com/ofertas-trabajo/?" + urlencode(params)
+    try:
+        r = requests.get(url, headers=SCRAPER_HEADERS, timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        print(f"  Tecnoempleo error: {e}")
+        return pd.DataFrame()
+    soup = BeautifulSoup(r.text, "html.parser")
+    rows = []
+    for a in soup.select('h3 a[href*="/rf-"]')[:limit]:
+        href = a.get("href", "")
+        if not href:
+            continue
+        card = a.find_parent("div", class_=lambda c: c and "border" in c and "rounded" in c)
+        desc_text = ""
+        loc_text = ""
+        if card:
+            # Localización: primer <b> (ciudad)
+            b = card.find("b")
+            loc_text = b.get_text(strip=True) if b else ""
+            # Descripción: span con clase hidden-md-down (versión desktop)
+            dspan = card.select_one("span.hidden-md-down")
+            if dspan:
+                desc_text = dspan.get_text(" ", strip=True)
+        rows.append({
+            "site":        "tecnoempleo",
+            "title":       a.get("title") or a.get_text(strip=True),
+            "company":     "Unknown",
+            "job_url":     href,
+            "location":    loc_text or location,
+            "description": desc_text[:1500],
+        })
+    print(f"  → Tecnoempleo: {len(rows)} ofertas")
+    return pd.DataFrame(rows)
+
+
 def get_jobs_data(location: str, search_term: str) -> pd.DataFrame:
     proxies = [PROXY_URL] if PROXY_URL else None
     print(f"\nSearching: '{search_term}' in '{location}'")
+    df = pd.DataFrame()
     for attempt in range(1, 4):
         try:
             jobs = scrape_jobs(
@@ -318,14 +420,26 @@ def get_jobs_data(location: str, search_term: str) -> pd.DataFrame:
                 hours_old=HOURS_OLD,
                 proxies=proxies
             )
-            n_sites = jobs["site"].value_counts().to_dict() if not jobs.empty else {}
-            print(f"  → {len(jobs)} jobs scraped {n_sites if n_sites else ''}")
-            return jobs
+            df = jobs
+            break
         except Exception as e:
             print(f"  Attempt {attempt} failed: {e}")
             if attempt < 3:
                 time.sleep(random.uniform(3, 6))
-    return pd.DataFrame()
+
+    # Portales españoles propios (no dependen de jobspy)
+    time.sleep(random.uniform(3, 5))
+    df_ij = scrape_infojobs(search_term, location)
+    time.sleep(random.uniform(1, 2))
+    df_te = scrape_tecnoempleo(search_term, location)
+    if not df_ij.empty:
+        df = pd.concat([df, df_ij], ignore_index=True, sort=False)
+    if not df_te.empty:
+        df = pd.concat([df, df_te], ignore_index=True, sort=False)
+
+    n_sites = df["site"].value_counts().to_dict() if not df.empty else {}
+    print(f"  → {len(df)} jobs scraped {n_sites if n_sites else ''}")
+    return df
 
 def fetch_missing_description(url: str) -> str:
     try:
