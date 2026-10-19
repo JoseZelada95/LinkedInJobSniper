@@ -159,6 +159,8 @@ def validate_credentials() -> None:
             else:
                 n_models = len(r.json().get("data", []))
                 print(f"[OK] API key Groq válida ({n_models} modelos disponibles)")
+                model_ids = [m.get("id", "?") for m in r.json().get("data", [])]
+                print(f"     Modelos disponibles: {', '.join(model_ids[:20])}")
 
                 probe = requests.post(
                     f"{BASE_URL}/chat/completions",
@@ -188,7 +190,8 @@ def validate_credentials() -> None:
                 else:
                     errors.append(
                         f"Modelo '{LLM_MODEL}' no responde ({probe.status_code}): "
-                        f"{probe.text[:200]}"
+                        f"{probe.text[:200]} — elige uno de la lista impresa arriba "
+                        f"y actualiza LLM_MODEL en .env/secrets."
                     )
         except requests.exceptions.RequestException as e:
             errors.append(f"No se pudo contactar con Groq API: {e}")
