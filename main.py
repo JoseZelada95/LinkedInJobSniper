@@ -16,6 +16,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
+from pdf_tailor import tailor_pdf_for_job, sanitize_filename
+
 load_dotenv()
 
 # ── Config ────────────────────────────────────────────────
@@ -69,6 +71,7 @@ RESULT_LIMIT     = 8
 HOURS_OLD        = 48
 SCORE_THRESHOLD  = int(os.getenv("SCORE_THRESHOLD", "50"))
 TAILOR_THRESHOLD = 75
+PDF_TAILOR_THRESHOLD = 85  # Generar PDF adaptado para scores >= 85
 PROXY_URL        = os.getenv("PROXY_URL") or None
 RESUME           = os.getenv("RESUME_TEXT") or None
 API_KEY          = os.getenv("API_KEY")
@@ -118,17 +121,118 @@ if not RESUME:
 if not API_KEY:
     raise SystemExit("ERROR: No API_KEY set in .env")
 
+# ── Preflight: validar credenciales ANTES de scraping ─────
+def validate_credentials() -> None:
+    """
+    Comprueba que todas las credenciales y servicios críticos funcionan
+    ANTES de ejecutar cualquier búsqueda. Si algo falla, aborta aquí
+    mismo sin gastar esfuerzo en scraping ni llamadas al LLM.
+    """
+    errors = []
+
+    # 1. CV en memoria
+    if RESUME:
+        print(f"[OK] CV cargado ({len(RESUME)} caracteres)")
+    else:
+        errors.append("CV vacío: define RESUME_TEXT en .env o configura Google Drive.")
+
+    # 2. API key Groq: presencia + validez real (models + 1-token probe)
+    if not API_KEY:
+        errors.append("API_KEY (Groq) no definida en .env.")
+    else:
+        try:
+            r = requests.get(
+                f"{BASE_URL}/models",
+                headers={"Authorization": f"Bearer {API_KEY}"},
+                timeout=15,
+            )
+            if r.status_code == 401:
+                errors.append(
+                    "API_KEY de Groq INVÁLIDA (401). Rótala en https://console.groq.com/keys"
+                )
+            elif r.status_code == 429:
+                errors.append("Groq rate-limit (429) al validar la key. Reintentar más tarde.")
+            elif r.status_code != 200:
+                errors.append(
+                    f"Groq API respondió {r.status_code} al validar la key: {r.text[:200]}"
+                )
+            else:
+                n_models = len(r.json().get("data", []))
+                print(f"[OK] API key Groq válida ({n_models} modelos disponibles)")
+
+                probe = requests.post(
+                    f"{BASE_URL}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": LLM_MODEL,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 1,
+                    },
+                    timeout=30,
+                )
+                if probe.status_code == 200:
+                    print(f"[OK] Modelo '{LLM_MODEL}' responde correctamente")
+                elif probe.status_code == 401:
+                    errors.append("Groq rechazó la llamada al modelo (401). Key inválida.")
+                elif probe.status_code == 403:
+                    errors.append(
+                        f"Sin acceso al modelo '{LLM_MODEL}' (403). Revisar modelo en .env."
+                    )
+                elif probe.status_code == 429:
+                    errors.append(
+                        "Cuota/rate-limit de Groq agotado (429). Esperar o revisar saldo."
+                    )
+                else:
+                    errors.append(
+                        f"Modelo '{LLM_MODEL}' no responde ({probe.status_code}): "
+                        f"{probe.text[:200]}"
+                    )
+        except requests.exceptions.RequestException as e:
+            errors.append(f"No se pudo contactar con Groq API: {e}")
+
+    # 3. Credenciales de email: presencia + login SMTP real
+    sender   = os.getenv("EMAIL_SENDER")
+    password = os.getenv("EMAIL_PASSWORD")
+    receiver = os.getenv("EMAIL_RECEIVER")
+    if not sender or not password or not receiver:
+        errors.append(
+            "Faltan EMAIL_SENDER / EMAIL_PASSWORD / EMAIL_RECEIVER en .env."
+        )
+    else:
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as server:
+                server.login(sender, password)
+            print(f"[OK] SMTP Gmail autenticado ({sender} → {receiver})")
+        except smtplib.SMTPAuthenticationError:
+            errors.append(
+                "SMTP: autenticación fallida. Revisar app password de Gmail "
+                "(https://myaccount.google.com/apppasswords)."
+            )
+        except Exception as e:
+            errors.append(f"SMTP no disponible: {e}")
+
+    if errors:
+        print("\n" + "=" * 60)
+        print("VALIDACIÓN PREVIA FALLIDA — no se ejecuta ningún scraping")
+        print("=" * 60)
+        for err in errors:
+            print(f"  [FAIL] {err}")
+        raise SystemExit(1)
+
+    print("\n[Todo OK] Credenciales validadas. Iniciando scraping...\n")
+
 # ── LLM setup ─────────────────────────────────────────────
-FALLBACK_MODELS = [
-    LLM_MODEL,                  # Primero intenta el modelo configurado en el Secret
-    "llama-3.3-70b-versatile",  # Primer respaldo potente
-    "llama-3.1-8b-instant"      # Segundo respaldo rápido
-]
+llm = ChatOpenAI(model=LLM_MODEL, api_key=API_KEY, base_url=BASE_URL, temperature=0)
 
 class JobEvaluation(BaseModel):
     score:  int = Field(description="Relevance score 0-100 based on resume match.")
     reason: str = Field(description="One-sentence reason for the score.")
     yoe:    str = Field(description="Years of experience required, or 'Not Specified'.")
+
+structured_llm = llm.with_structured_output(JobEvaluation, method="json_mode")
 
 system_template = """You are an expert career coach for the Spanish job market. Evaluate how well a job description matches a candidate's resume.
 Return a score (0-100), years of experience required, and a one-sentence reason.
@@ -156,8 +260,11 @@ eval_prompt = ChatPromptTemplate.from_messages([
     ("system", system_template),
     ("user", "RESUME:\n{resume}\n\nJOB TITLE: {title}\nJOB DESCRIPTION:\n{description}\n\nScore strictly but fairly. Consider both LINE A (Mid/Senior) and LINE B (Junior) matches.")
 ])
+evaluation_chain = eval_prompt | structured_llm
 
-# — Tailoring model setup —
+# — Tailoring model —
+tailor_llm = ChatOpenAI(model=LLM_MODEL, api_key=API_KEY, base_url=BASE_URL, temperature=0.4)
+
 tailor_prompt = ChatPromptTemplate.from_messages([
     ("system", """You are an expert CV writer. Given a resume and a job description, rewrite 3-4 of the
 most relevant bullet points from the candidate's experience to better mirror the job's language and keywords.
@@ -165,22 +272,20 @@ Keep the same facts — do NOT invent achievements or numbers. Output ONLY the r
 short HTML unordered list (<ul><li>...</li></ul>). No preamble, no explanation."""),
     ("user", "RESUME:\n{resume}\n\nJOB TITLE: {title}\nJOB DESCRIPTION:\n{description}")
 ])
+tailor_chain = tailor_prompt | tailor_llm
 
 def tailor_resume_for_job(title: str, description: str) -> str:
-    for model_name in FALLBACK_MODELS:
-        try:
-            current_tailor_llm = ChatOpenAI(model=model_name, api_key=API_KEY, base_url=BASE_URL, temperature=0.4)
-            tailor_chain = tailor_prompt | current_tailor_llm
-            result = tailor_chain.invoke({
-                "resume":      RESUME[:2000],
-                "title":       title,
-                "description": description[:1500]
-            })
-            return result.content.strip()
-        except Exception as e:
-            continue
-    print(f"  Tailoring failed for '{title}' on all models")
-    return ""
+    try:
+        result = tailor_chain.invoke({
+            "resume":      RESUME[:2000],
+            "title":       title,
+            "description": description[:1500]
+        })
+        return result.content.strip()
+    except Exception as e:
+        print(f"  Tailoring failed for '{title}': {e}")
+        return ""
+
 # ── Scraping ──────────────────────────────────────────────
 def get_jobs_data(location: str, search_term: str) -> pd.DataFrame:
     proxies = [PROXY_URL] if PROXY_URL else None
@@ -222,24 +327,16 @@ def fetch_missing_description(url: str) -> str:
 def evaluate_job(title: str, description: str) -> dict:
     if not description or len(str(description)) < 50:
         return {"score": 0, "reason": "No description", "yoe": "N/A"}
-        
-    for model_name in FALLBACK_MODELS:
-        try:
-            current_llm = ChatOpenAI(model=model_name, api_key=API_KEY, base_url=BASE_URL, temperature=0)
-            structured_current_llm = current_llm.with_structured_output(JobEvaluation, method="json_mode")
-            chain = eval_prompt | structured_current_llm
-            
-            result = chain.invoke({
-                "resume":      RESUME[:2000],
-                "title":       title,
-                "description": description[:1500]
-            })
-            return {"score": result.score, "reason": result.reason, "yoe": result.yoe}
-        except Exception as e:
-            # Si falla un modelo, pasa silenciosamente al siguiente de la lista de respaldo
-            continue
-            
-    return {"score": 0, "reason": "AI Error", "yoe": "N/A"}
+    try:
+        result = evaluation_chain.invoke({
+            "resume":      RESUME[:2000],
+            "title":       title,
+            "description": description[:1500]
+        })
+        return {"score": result.score, "reason": result.reason, "yoe": result.yoe}
+    except Exception as e:
+        print(f"  AI error for '{title}': {e}")
+        return {"score": 0, "reason": "AI Error", "yoe": "N/A"}
 
 # ── Google Sheets export ──────────────────────────────────
 def get_sheets_service():
@@ -264,57 +361,16 @@ def get_sheets_service():
 
 
 def export_to_sheets(jobs: List[dict]):
-    """Export job data to Google Sheets tracking spreadsheet."""
-    if not GOOGLE_SHEET_ID:
-        print("GOOGLE_SHEET_ID not set — skipping Sheets export.")
-        return
-
-    service = get_sheets_service()
-    if not service:
-        return
-
-    try:
-        rows = []
-        today = datetime.now().strftime("%d/%m/%Y")
-        for job in jobs:
-            match_pct = f"{job['score']}%"
-            salary = ""
-            desc_lower = job.get('description', '').lower()
-            import re
-            salary_match = re.search(r'(\d{2,3}[\.\s]?\d{3})\s*(?:€|eur|k)', desc_lower)
-            if salary_match:
-                salary = salary_match.group(1) + "k"
-
-            rows.append([
-                today,                       # Fecha
-                job.get('company', ''),      # Empresa
-                job.get('title', ''),        # Puesto
-                "Madrid / Remote",           # Ubicación
-                match_pct,                   # Match %
-                salary,                      # Salario
-                job.get('job_url', ''),      # URL Oferta
-                "Nuevo",                     # Estado
-                job.get('reason', '')[:200], # Notas
-                "Drive CV"                   # CV Usado
-            ])
-
-        body = {"values": rows}
-        result = service.spreadsheets().values().append(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range="A:J",
-            valueInputOption="USER_ENTERED",
-            insertDataOption="INSERT_ROWS",
-            body=body
-        ).execute()
-
-        print(f"✅ Exported {len(rows)} jobs to Google Sheets")
-
-    except Exception as e:
-        print(f"❌ Sheets export failed: {e}")
+    """Sheets export disabled by configuration."""
+    return
 
 
 # ── Email ─────────────────────────────────────────────────
-def send_email(top_jobs: List[dict]):
+def send_email(top_jobs: List[dict], pdf_attachments: List[tuple] = None):
+    """
+    Envía email HTML con ofertas.
+    pdf_attachments: lista de (filename, pdf_bytes) para adjuntar.
+    """
     if not top_jobs:
         print("No jobs met the score threshold. No email sent.")
         return
@@ -329,11 +385,15 @@ def send_email(top_jobs: List[dict]):
 
         tailor_html = ""
         if job.get("tailored_bullets"):
+            pdf_note = ""
+            if job.get("pdf_filename"):
+                pdf_note = f'<div style="margin-top:6px;font-size:12px;color:#27ae60;">📄 PDF adaptado adjunto: <b>{job["pdf_filename"]}</b></div>'
             tailor_html = f"""
             <tr>
                 <td colspan="6" style="padding:8px 10px 14px 10px;background:#f0fff4;border-bottom:2px solid #27ae60;">
                     <b style="color:#27ae60;">✨ Tailored CV Bullets for this role:</b><br>
                     <div style="font-size:13px;color:#2c3e50;margin-top:4px;">{job['tailored_bullets']}</div>
+                    {pdf_note}
                 </td>
             </tr>"""
 
@@ -375,16 +435,34 @@ def send_email(top_jobs: List[dict]):
     msg['From']    = sender
     msg['To']      = receiver
     msg.attach(MIMEText(html, 'html'))
+
+    # Adjuntar PDFs adaptados
+    if pdf_attachments:
+        from email.mime.application import MIMEApplication
+        for filename, pdf_bytes in pdf_attachments:
+            try:
+                part = MIMEApplication(pdf_bytes, Name=filename)
+                part['Content-Disposition'] = f'attachment; filename="{filename}"'
+                msg.attach(part)
+                print(f"  Attached: {filename} ({len(pdf_bytes)} bytes)")
+            except Exception as e:
+                print(f"  Failed to attach {filename}: {e}")
+
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(sender, password)
             server.send_message(msg)
-        print(f"Email sent to {receiver}")
+        attach_note = f" with {len(pdf_attachments)} PDFs" if pdf_attachments else ""
+        print(f"Email sent to {receiver}{attach_note}")
     except Exception as e:
         print(f"Email failed: {e}")
 
 # ── Main ──────────────────────────────────────────────────
 def main():
+    # 0. Preflight: validar API keys y servicios ANTES de raspar
+    validate_credentials()
+
+    # 1. Scraping (solo si el preflight pasó)
     df = pd.DataFrame()
     for location in LOCATIONS:
         for term in SEARCH_TERMS:
@@ -429,14 +507,28 @@ def main():
     scored_jobs.sort(key=lambda x: x['score'], reverse=True)
     top_20 = scored_jobs[:20]
 
+    # Tailoring: bullets (≥75) + PDFs adaptados (≥85)
+    base_pdf_cache = {}
+    pdf_attachments = []
     for job in top_20:
         if job['score'] >= TAILOR_THRESHOLD:
-            print(f"  ✨ Tailoring CV for: {job['title']} @ {job['company']}")
+            print(f"  Tailoring bullets: {job['title']} @ {job['company']}")
             job['tailored_bullets'] = tailor_resume_for_job(job['title'], job['description'])
 
+        if job['score'] >= PDF_TAILOR_THRESHOLD:
+            print(f"  Generating tailored PDF: {job['title']} @ {job['company']}")
+            try:
+                pdf_bytes = tailor_pdf_for_job(job, base_pdf_cache)
+                if pdf_bytes:
+                    fname = f"CV_{sanitize_filename(job['company'])}_{sanitize_filename(job['title'])[:30]}.pdf"
+                    pdf_attachments.append((fname, pdf_bytes))
+                    job['pdf_filename'] = fname
+            except Exception as e:
+                print(f"  PDF generation failed for '{job['title']}': {e}")
+
     export_to_sheets(top_20)
-    print(f"\n{len(top_20)} jobs above threshold. Sending email...")
-    send_email(top_20)
+    print(f"\n{len(top_20)} jobs above threshold, {len(pdf_attachments)} tailored PDFs. Sending email...")
+    send_email(top_20, pdf_attachments)
 
 if __name__ == "__main__":
     main()
