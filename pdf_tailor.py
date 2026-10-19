@@ -1,247 +1,225 @@
+"""
+PDF Tailor - Genera CVs adaptados en PDF para ofertas de alto score.
+- PDF base limpio desde RESUME_TEXT (env var)
+- Página inicial con bullets personalizados por oferta
+- Groq LLM para bullets de alta calidad
+- Retorna bytes para adjuntar al email
+"""
+import io
 import os
 import re
-import shutil
 from datetime import date
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
 
-import fitz  # pymupdf
+import fitz
 from dotenv import load_dotenv
-from openai import OpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+
+load_dotenv()
+
+API_KEY = os.getenv("API_KEY")
+BASE_URL = os.getenv("API_BASE")
+LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+RESUME = os.getenv("RESUME_TEXT") or ""
+
+_tailor_llm = None
 
 
-BASE_CV_DIR = Path("/Users/misbah/Downloads/CVs")
-TAILORED_DIR = BASE_CV_DIR / "tailored"
-LOG_DIR = Path("/Users/misbah/.openclaw/logs")
-
-
-def _ensure_dirs() -> None:
-    TAILORED_DIR.mkdir(parents=True, exist_ok=True)
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _load_client() -> OpenAI:
-    # Load env explicitly from project .env (same as main.py)
-    project_root = Path(__file__).resolve().parent
-    env_path = project_root / ".env"
-    if env_path.exists():
-        load_dotenv(dotenv_path=str(env_path))
-    api_key = os.getenv("API_KEY") or ""
-    api_base = os.getenv("API_BASE") or ""
-    model = os.getenv("LLM_MODEL") or ""
-    if not api_key or not api_base or not model:
-        raise RuntimeError(
-            "Groq/OpenAI client not configured: ensure API_KEY, API_BASE, and LLM_MODEL "
-            "are set in .env before running the PDF tailoring module."
+def _get_llm():
+    global _tailor_llm
+    if _tailor_llm is None:
+        _tailor_llm = ChatOpenAI(
+            model=LLM_MODEL, api_key=API_KEY, base_url=BASE_URL, temperature=0.4
         )
-    # openai-python 2.x style client
-    client = OpenAI(api_key=api_key, base_url=api_base.rstrip("/"))
-    return client
+    return _tailor_llm
 
 
-def _list_original_cvs() -> List[Path]:
-    if not BASE_CV_DIR.exists():
-        return []
-    cvs: List[Path] = []
-    for p in BASE_CV_DIR.rglob("*.pdf"):
-        # Skip anything already under /tailored/
-        if TAILORED_DIR in p.parents:
-            continue
-        cvs.append(p)
-    return sorted(cvs)
+def generate_base_cv_pdf(resume_text: str) -> bytes:
+    """Genera PDF base limpio del CV con pagination."""
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text(
+        (40, 55), "JOSE ALEXANDER ZELADA AVILES",
+        fontsize=15, fontname="helv", color=(0.08, 0.2, 0.4),
+    )
+    page.insert_text(
+        (40, 73), "Backend .NET Developer  |  Madrid, España  |  alex2521@hotmail.com",
+        fontsize=9, fontname="helv", color=(0.35, 0.35, 0.35),
+    )
+    shape = page.new_shape()
+    shape.draw_line((40, 82), (555, 82))
+    shape.finish(color=(0.7, 0.7, 0.7), width=0.5)
+    shape.commit()
+
+    y = 100
+    line_height = 11.5
+    font_size = 8.5
+    max_chars = 105
+
+    def new_page():
+        nonlocal page, y
+        page = doc.new_page()
+        y = 50
+
+    def write_line(text: str, fs: float, color):
+        nonlocal y
+        if y > 780:
+            new_page()
+        page.insert_text((40, y), text, fontsize=fs, fontname="helv", color=color)
+        y += line_height
+
+    for line in resume_text.split("\n"):
+        is_header = (line.isupper() and len(line) < 60) or (
+            line.endswith(":") and len(line) < 60 and line == line.upper()
+        )
+        fs = font_size + 1.5 if is_header else font_size
+        color = (0.1, 0.2, 0.4) if is_header else (0, 0, 0)
+
+        if len(line) <= max_chars:
+            write_line(line, fs, color)
+        else:
+            current = ""
+            for word in line.split():
+                test = (current + " " + word).strip()
+                if len(test) > max_chars and current:
+                    write_line(current, fs, color)
+                    current = word
+                else:
+                    current = test
+            if current:
+                write_line(current, fs, color)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    doc.close()
+    return buf.getvalue()
 
 
-def _extract_pdf_text(path: Path) -> str:
-    text_parts: List[str] = []
-    with fitz.open(path) as doc:
-        for page in doc:
-            text_parts.append(page.get_text("text"))
-    return "\n".join(text_parts)
-
-
-def _tokenise(s: str) -> List[str]:
-    return re.findall(r"[A-Za-z]+", s.lower())
-
-
-def score_cv_for_job(cv_text: str, job_title: str, job_description: str) -> float:
-    """
-    Very simple local relevance score based on token overlap.
-    Does NOT send any data off-machine.
-    """
-    job_tokens = set(_tokenise(job_title + " " + job_description))
-    if not job_tokens:
-        return 0.0
-    cv_tokens = set(_tokenise(cv_text))
-    overlap = job_tokens & cv_tokens
-    return len(overlap) / len(job_tokens)
-
-
-def select_best_cv(
-    cvs: List[Tuple[Path, str]],
-    job_title: str,
-    job_description: str,
-) -> Optional[Tuple[Path, str, float]]:
-    best: Optional[Tuple[Path, str, float]] = None
-    for path, text in cvs:
-        score = score_cv_for_job(text, job_title, job_description)
-        if best is None or score > best[2]:
-            best = (path, text, score)
-    return best
-
-
-def generate_tailored_bullets(
-    job_title: str,
-    company: str,
-    job_description: str,
-    cv_text: str,
+def get_tailored_bullets(
+    job_title: str, company: str, description: str, resume_text: str
 ) -> str:
-    """
-    Offline fallback: select up to three of the strongest existing bullets from the CV
-    (by simple keyword overlap with the job description) and rewrite them into a
-    Google XYZ-style sentence without calling any external API.
-    """
-    # Collect bullet-style lines from the CV text
-    bullet_lines: List[str] = []
-    for line in cv_text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(("-", "•", "*")) and len(stripped) > 10:
-            bullet_lines.append(stripped.lstrip("-•* ").strip())
+    """Genera 4 bullets personalizados usando Groq LLM."""
+    llm = _get_llm()
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """Eres un experto escritor de CVs para el mercado español tech.
+Dado un resume y una descripción de puesto, reescribe 4 bullets del candidato 
+para maximizar coincidencia con el puesto.
 
-    if not bullet_lines:
+REGLAS ESTRICTAS:
+- Mantén los HECHOS reales del resume (NO inventes logros ni números)
+- Usa palabras clave del puesto cuando coincidan con experiencia real
+- 4 bullets máximo, cada uno máximo 2 líneas
+- Empieza con verbo de acción en pasado (Optimicé, Desarrollé, Gestioné)
+- Idioma: español
+- Output SOLO los 4 bullets, uno por línea, empezando con "- "
+SIN explicaciones, SIN preámbulo, SIN markdown.""",
+            ),
+            (
+                "user",
+                "RESUME:\n{resume}\n\nPUESTO: {title}\nEMPRESA: {company}\nDESCRIPCIÓN:\n{description}",
+            ),
+        ]
+    )
+    chain = prompt | llm
+    try:
+        result = chain.invoke(
+            {
+                "resume": resume_text[:2500],
+                "title": job_title,
+                "company": company,
+                "description": description[:1500],
+            }
+        )
+        bullets = result.content.strip()
+        cleaned = []
+        for line in bullets.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            if not line.startswith("-"):
+                line = "- " + line.lstrip("-•* ").strip()
+            cleaned.append(line)
+        return "\n".join(cleaned[:4])
+    except Exception as e:
+        print(f"  LLM bullets failed for '{job_title}': {e}")
         return ""
 
-    job_tokens = set(_tokenise(job_title + " " + job_description))
 
-    def score_line(line: str) -> int:
-        return len(job_tokens & set(_tokenise(line)))
-
-    # Rank bullets by relevance to the job description
-    ranked = sorted(bullet_lines, key=score_line, reverse=True)
-    top_lines = [ln for ln in ranked if score_line(ln) > 0][:3] or ranked[:3]
-
-    rewritten: List[str] = []
-    for original in top_lines:
-        # Very lightweight heuristic split around "by" if present
-        parts = re.split(r"\bby\b", original, maxsplit=1, flags=re.IGNORECASE)
-        if len(parts) == 2:
-            x_part = parts[0].strip(" -–—:;,.")
-            y_part = parts[1].strip(" -–—:;,.")
-        else:
-            x_part = original.strip(" -–—:;,.")
-            y_part = "delivering responsibilities closely aligned with the role"
-
-        sentence = (
-            f"Accomplished {x_part} by {y_part}, "
-            f"resulting in stronger outcomes for the organisation."
-        )
-        rewritten.append(f"- {sentence}")
-
-    return "\n".join(rewritten)
-
-
-def _write_tailored_pdf(
-    original: Path,
-    output: Path,
-    job_title: str,
-    company: str,
-    bullets: str,
-) -> None:
-    """
-    Create a new PDF that preserves the original CV content but
-    prepends a new first page containing the tailored bullets.
-    The original CV pages remain untouched after that page.
-    """
-    # Extract original text once so that personal details, dates,
-    # companies, and job titles are all preserved verbatim.
-    original_text = _extract_pdf_text(original)
-
+def create_tailored_pdf(
+    base_pdf_bytes: bytes, job_title: str, company: str, bullets: str
+) -> bytes:
+    """Crea PDF adaptado: página 1 bullets + CV base."""
     doc_new = fitz.open()
     page = doc_new.new_page()
 
-    heading = f"Tailored CV bullets for {job_title} at {company}\n\n"
-    body = heading + bullets + "\n\nOriginal CV:\n" + original_text
-    rect = fitz.Rect(40, 40, 550, 800)
-    page.insert_textbox(rect, body, fontsize=11, fontname="helv")
+    page.insert_text(
+        (40, 55), "CV ADAPTADO PARA ESTA OFERTA",
+        fontsize=13, fontname="helv", color=(0.08, 0.2, 0.4),
+    )
+    page.insert_text(
+        (40, 75), f"Puesto: {job_title}",
+        fontsize=10, fontname="helv", color=(0, 0, 0),
+    )
+    page.insert_text(
+        (40, 90), f"Empresa: {company}",
+        fontsize=10, fontname="helv", color=(0, 0, 0),
+    )
+    page.insert_text(
+        (40, 105), f"Generado: {date.today().isoformat()}",
+        fontsize=9, fontname="helv", color=(0.4, 0.4, 0.4),
+    )
+    shape = page.new_shape()
+    shape.draw_line((40, 115), (555, 115))
+    shape.finish(color=(0.7, 0.7, 0.7), width=0.5)
+    shape.commit()
 
-    with fitz.open(original) as orig_doc:
-        doc_new.insert_pdf(orig_doc)
+    page.insert_text(
+        (40, 135), "Bullets personalizados:",
+        fontsize=10, fontname="helv", color=(0.15, 0.15, 0.15),
+    )
+    rect = fitz.Rect(40, 150, 555, 700)
+    page.insert_textbox(
+        rect, bullets, fontsize=9.5, fontname="helv", lineheight=1.5, color=(0, 0, 0)
+    )
+    page.insert_text(
+        (40, 750), "Usa estos bullets al enviar la aplicación. CV completo en páginas siguientes.",
+        fontsize=8, fontname="helv", color=(0.5, 0.5, 0.5),
+    )
 
-    doc_new.save(output)
+    base_doc = fitz.open(stream=base_pdf_bytes, filetype="pdf")
+    doc_new.insert_pdf(base_doc)
+    base_doc.close()
+
+    buf = io.BytesIO()
+    doc_new.save(buf)
     doc_new.close()
+    return buf.getvalue()
 
 
-def _sanitise_for_filename(value: str) -> str:
-    value = re.sub(r"[^\w]+", "_", value.strip())
-    return value.strip("_") or "Unknown"
-
-
-def tailor_cv_for_job(job: Dict[str, Any]) -> Optional[Path]:
-    """
-    Tailor a CV for a single job dict with at least:
-      - title
-      - company
-      - description
-      - score
-
-    Returns the path to the tailored PDF, or None if nothing was produced.
-    """
-    _ensure_dirs()
-
+def tailor_pdf_for_job(job: dict, base_pdf_cache: dict) -> bytes:
+    """Pipeline: bullets LLM + PDF adaptado. Retorna bytes o None."""
     title = str(job.get("title") or "").strip()
     company = str(job.get("company") or "").strip()
     description = str(job.get("description") or "").strip()
-
     if not title or not company or not description:
         return None
 
-    cvs_paths = _list_original_cvs()
-    if not cvs_paths:
-        return None
-
-    # Preload CV texts once per run
-    cvs_with_text: List[Tuple[Path, str]] = [
-        (p, _extract_pdf_text(p)) for p in cvs_paths
-    ]
-
-    best = select_best_cv(cvs_with_text, title, description)
-    if not best:
-        return None
-
-    best_path, best_text, relevance = best
-
-    # Use offline tailoring (no external API calls) to avoid rate limits.
-    bullets = generate_tailored_bullets(
-        job_title=title,
-        company=company,
-        job_description=description,
-        cv_text=best_text,
-    )
+    bullets = get_tailored_bullets(title, company, description, RESUME)
     if not bullets:
         return None
 
-    # Build output filename
-    today = date.today().strftime("%Y-%m-%d")
-    company_part = _sanitise_for_filename(company)
-    title_part = _sanitise_for_filename(title)
-    output_name = f"{company_part}_{title_part}_{today}.pdf"
-    output_path = TAILORED_DIR / output_name
+    if "pdf" not in base_pdf_cache:
+        base_pdf_cache["pdf"] = generate_base_cv_pdf(RESUME)
 
-    _write_tailored_pdf(
-        original=best_path,
-        output=output_path,
-        job_title=title,
-        company=company,
-        bullets=bullets,
-    )
+    pdf_bytes = create_tailored_pdf(base_pdf_cache["pdf"], title, company, bullets)
+    print(f"  Tailored PDF: {title} @ {company} ({len(pdf_bytes)} bytes)")
+    return pdf_bytes
 
-    # Log a concise audit line
-    log_line = (
-        f"{date.today().isoformat()} | tailored | "
-        f"job='{title}' @ '{company}' | score={job.get('score')} | "
-        f"source_cv='{best_path.name}' | output='{output_path}' | "
-        f"relevance={relevance:.3f}"
-    )
-    (LOG_DIR / "pdf_tailor.log").open("a", encoding="utf-8").write(log_line + "\n")
 
-    return output_path
+def sanitize_filename(value: str) -> str:
+    value = re.sub(r"[^\w]+", "_", value.strip())
+    return value.strip("_")[:50] or "Unknown"
 
