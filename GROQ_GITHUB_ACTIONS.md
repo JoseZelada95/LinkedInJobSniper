@@ -55,16 +55,13 @@ Keep your existing secrets for email and resume:
 - `RESUME_TEXT` (or `GCP_CREDENTIALS_JSON` + `RESUME_FILE_ID`)
 - `CRITERIA` (optional)
 
-## 3. GitHub environment (optional)
+## 3. GitHub environment
 
-The workflow uses `environment: JobSniperEnvVar`. Either:
-
-- Create an environment named `JobSniperEnvVar` under **Settings → Environments** and add the same secrets there, or  
-- Remove the `environment: JobSniperEnvVar` line from `.github/workflows/daily.yml` so the job uses the repo’s Actions secrets only.
+No environment is required: the workflow uses the repository's **Actions secrets** directly. Add them under **Settings → Secrets and variables → Actions**.
 
 ## 4. Schedule
 
-The workflow is set to run at **08:00 UTC** daily (~8am London in winter). You can trigger it manually anytime: **Actions → Daily Career Scout → Run workflow**. To change the time, edit the `cron` in `.github/workflows/daily.yml` (e.g. `0 7 * * *` for 7am UTC).
+The workflow runs daily at **08:00 Europe/Madrid** all year round. Because GitHub Actions only supports UTC, it fires twice and a guard keeps the run that falls at 08:00 in Madrid (`07:00 UTC` in winter, `06:00 UTC` in summer). You can trigger it manually anytime: **Actions → Daily Career Scout (LinkedIn Job Sniper) → Run workflow**. To change the time, edit the root workflow `.github/workflows/linkedin-job-sniper.yml` (both the crons and the guard).
 
 ## Summary
 

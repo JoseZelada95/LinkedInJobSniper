@@ -1,32 +1,62 @@
 # 🕵️‍♂️ LinkedIn Job Sniper
 
-An automated AI agent that scrapes LinkedIn daily, scores jobs against your resume, tailors your CV bullets for top matches, and emails you the results every morning — completely free.
+An automated AI agent that scrapes job boards daily, scores every offer against your resume,
+tailors your CV for the top matches and emails you the results every morning — completely free.
+
+> Fork adapted for a **Backend .NET Developer in Madrid** (dual strategy: Mid/Senior .NET + Junior/Prácticas).
 
 ## ✨ Features
 
-- 🔍 **Multi-Term Scraping**: Searches 13 job titles simultaneously across London
-- 🧠 **AI Scoring**: Uses Groq (free) + LangChain to score every job 0–100 against your resume
-- ✨ **CV Tailoring**: For jobs scoring ≥75, automatically rewrites your resume bullets to match the job's keywords
-- 📊 **Google Sheets Tracker**: Exports all top matches to a Google Sheet so you can track what you've applied to
-- 📧 **Daily Email Digest**: HTML email with scores, tailored bullets, YoE, and Apply buttons
-- ☁️ **Zero Cost**: Runs entirely on GitHub Actions (free) + Groq API (free tier)
-- 🚫 **No Proxy Needed**: Works without any paid proxy service
+- 🔍 **Multi-term scraping**: 36 search terms × 3 locations (Madrid / Remote) across LinkedIn, Indeed, Glassdoor and **InfoJobs (official API)**
+- 🧠 **AI scoring**: Groq (free) + LangChain score every job 0–100 against your resume, with **automatic fallback across models**
+- ✨ **CV tailoring**: jobs scoring ≥75 get rewritten bullets that mirror the job's keywords
+- 📄 **Tailored PDFs** (optional, autonomous agent): builds a personalised PDF per offer, 100 % offline
+- 📊 **Google Sheets tracker**: appends every match so you can follow your pipeline
+- 📧 **Daily email digest**: HTML email with scores, tailored bullets, YoE and Apply buttons
+- ✅ **Tested**: 85 unit tests run offline (no network, no credentials needed)
+- 🔁 **No repeats**: jobs already emailed are skipped on later runs (history kept in `sent_jobs.json` and Google Sheets)
+- ☁️ **Zero cost**: GitHub Actions (free) + Groq API (free tier)
 
 ## 🚀 How It Works
 
-1. **Trigger**: Runs automatically every day at 8:00 AM UTC via GitHub Actions cron
-2. **Scrape**: Fetches fresh LinkedIn jobs across 13 search terms in London
-3. **Deduplicate**: Removes duplicate listings across search terms
-4. **Evaluate**: Groq AI reads your resume and scores every job (0–100)
-5. **Tailor**: For jobs scoring ≥75, rewrites your CV bullets to mirror the job's language
-6. **Export**: Appends all top matches to your Google Sheet tracker
-7. **Email**: Sends you the top 15 jobs with tailored bullets and Apply buttons
+1. **Trigger**: runs daily at 08:00 Europe/Madrid via GitHub Actions cron (a DST-aware guard checks the local hour)
+2. **Scrape**: fetches fresh offers for every search term × location
+3. **Deduplicate**: removes the same offer appearing in several searches
+4. **Skip repeats**: drops offers already sent in previous daily emails (local `sent_jobs.json` + URLs in your Google Sheet)
+5. **Evaluate**: Groq AI reads your resume and scores every job (0–100)
+6. **Tailor**: for jobs scoring ≥75, rewrites your CV bullets to mirror the job's language
+7. **Export**: appends all top matches to your Google Sheet tracker
+8. **Email**: sends you the top 20 jobs with tailored bullets and Apply buttons
+
+## 🗂️ Project structure
+
+```
+main.py                  # Entry point of the daily report (what GitHub Actions runs)
+autonomous_agent.py      # Entry point of the autonomous agent (continuous or --once)
+job_sniper/              # All the logic, one responsibility per module
+├── config.py            # Configuration: .env / Secrets → immutable Settings object
+├── models.py            # Domain models (JobEvaluation, JobOffer)
+├── prompts.py           # LLM prompt templates
+├── llm.py               # LLM client + fallback strategy across models
+├── scraping.py          # Offers retrieval (jobspy + manual description fetch)
+├── infojobs.py          # InfoJobs source (official API; jobspy doesn't support it)
+├── evaluation.py        # Scores offers against the resume (0–100)
+├── tailoring.py         # Tailored CV bullets for the email
+├── pdf_generator.py     # Personalised PDF generation (offline, no LLM)
+├── sheets.py            # Google Sheets export
+├── emailer.py           # Daily HTML email digest
+├── resume.py            # Resume loading (env var or Google Drive)
+├── applications.py      # Application log + daily limit (autonomous agent)
+├── pipeline.py          # Orchestration of the complete flows
+└── logging_utils.py     # Uniform logging (console + file)
+tests/                   # pytest suite (offline)
+```
 
 ## ⚙️ Setup
 
 ### 1. Fork this repo
 
-Click **Fork** → **Create fork**
+Click **Fork** → **Create fork**.
 
 ### 2. Get a Groq API Key (Free)
 
@@ -34,7 +64,7 @@ Click **Fork** → **Create fork**
 - Sign up and create an API key
 - No credit card required — generous free tier
 
-### 3. Set up Gmail App Password
+### 3. Set up a Gmail App Password
 
 - Go to [https://myaccount.google.com/security](https://myaccount.google.com/security)
 - Enable 2-Step Verification
@@ -71,7 +101,14 @@ Go to **Settings → Secrets and variables → Actions → New repository secret
 | `GOOGLE_SHEET_ID` | ID from your Google Sheet URL | ✅ |
 | `GCP_CREDENTIALS_JSON` | Paste entire contents of your service account JSON | ✅ |
 | `CRITERIA` | Optional extra scoring instructions | Optional |
-| `RESUME_FILE_ID` | File ID from Google Drive resume URL | Optional |
+| `RESUME_FILE_ID` | File ID from your Google Drive resume URL | Optional |
+| `TAILOR_THRESHOLD` | Minimum score to tailor the CV (default `75`) | Optional |
+| `TOP_JOBS_LIMIT` | Max jobs in the daily report (default `20`) | Optional |
+| `PROXY_URL` | Proxy for scraping (optional) | Optional |
+| `INFOJOBS_CLIENT_ID` | Client ID of your app at developer.infojobs.net (enables the InfoJobs source) | Optional |
+| `INFOJOBS_CLIENT_SECRET` | Client secret of your app | With client ID |
+| `LOG_DIR` | Where to write logs (default `~/.linkedin_job_sniper/logs`) | Optional |
+| `CV_BASE_DIR` | Folder with your base CVs (autonomous agent only) | Optional |
 
 ### 6. Enable Actions & Run
 
@@ -81,55 +118,64 @@ Go to **Settings → Secrets and variables → Actions → New repository secret
 
 ## 🔧 Customisation
 
-Edit `main.py` to change search terms, location, or thresholds:
+Everything lives in **`job_sniper/config.py`** — there is a single source of truth for search
+terms, locations and thresholds:
 
 ```python
-SEARCH_TERMS = [
-    "Junior Product Manager",
-    "Graduate Finance Analyst",
-    "Junior Business Analyst",
-    "Graduate Operations Analyst",
-    "Junior Data Analyst",
-    "Graduate Scheme Finance",
-    "Associate Product Manager",
-    "Strategy and Operations Analyst",
-    "GTM Associate",
-    "Operations Associate",
-    "Graduate Customer Success Manager",
-    "Business Development Associate",
-    "Graduate Consultant",
-]
-LOCATIONS        = ["London, England"]
-RESULT_LIMIT     = 15    # per search term
-HOURS_OLD        = 24
-SCORE_THRESHOLD  = 50    # minimum score to appear in email
-TAILOR_THRESHOLD = 75    # minimum score to generate tailored CV bullets
+SEARCH_TERMS = ("Desarrollador .NET", "Junior .NET Developer", ...)
+LOCATIONS    = ("Madrid, Spain", "Madrid, España", "Remote")
+
+DEFAULT_RESULT_LIMIT     = 8    # offers per search term
+DEFAULT_HOURS_OLD        = 48   # max offer age
+DEFAULT_SCORE_THRESHOLD  = 50   # minimum score to appear in the email
+DEFAULT_TAILOR_THRESHOLD = 75   # minimum score to tailor the CV
+DEFAULT_TOP_JOBS_LIMIT   = 20   # jobs in the daily report
 ```
+
+## 🧑‍💻 Local development
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate            # Windows
+pip install -r requirements-dev.txt
+
+pytest                            # run the whole suite (offline, no credentials)
+python main.py                    # daily report (needs a .env file)
+python autonomous_agent.py --once # autonomous cycle, one pass
+```
+
+The test suite never touches the network: scraping, the LLM API, SMTP and Google are
+either monkeypatched or replaced by pure functions.
 
 ## 📊 Google Sheets Tracker
 
 Every daily run appends matched jobs to your sheet with these columns:
 
-| Date | Score | Title | Company | YoE | Reason | URL | Applied? |
-|------|-------|-------|---------|-----|--------|-----|----------|
+| Fecha | Empresa | Puesto | Ubicación | Match % | Salario | URL Oferta | Estado | Notas | CV Usado |
+|-------|---------|--------|-----------|---------|---------|------------|--------|-------|----------|
 
-Manually update the **Applied?** column as you go to track your pipeline.
+Manually update the **Estado** column as you go to track your pipeline.
 
 ## ⏰ Schedule
 
-Runs daily at **8:00 AM UTC** (8:00 AM GMT / 9:00 AM BST in summer).
+Runs daily at **08:00 Europe/Madrid, all year round**.
 
-To change, edit `.github/workflows/linkedin-job-sniper.yml`:
+GitHub Actions schedules only in UTC and has no timezone support, so the
+workflow at the repository root (`.github/workflows/linkedin-job-sniper.yml`)
+fires twice and a guard runs the agent only when the local hour in Madrid is 8:
 
-```yaml
-- cron: '0 8 * * *'  # 8am UTC daily
-```
+- Winter (CET, UTC+1): `07:00 UTC` = `08:00 Madrid`
+- Summer (CEST, UTC+2): `06:00 UTC` = `08:00 Madrid`
+
+To change it, edit the root workflow and adjust both the crons and the guard.
 
 ## ⚠️ Disclaimer
 
-For educational purposes only. Web scraping may violate LinkedIn's Terms of Service. Use responsibly and at your own risk.
+For educational purposes only. Web scraping may violate job boards' Terms of Service.
+Use responsibly and at your own risk.
 
 ## 👨‍💻 Author
 
-Misbah — built on top of the original [LinkedInJobSniper](https://github.com/tao-991/LinkedInJobSniper) by Tao.  
+Fork maintained by JoseZelada95, built on top of the original
+[LinkedInJobSniper](https://github.com/tao-991/LinkedInJobSniper) by Tao.
 Powered by Python, LangChain, Groq & GitHub Actions ☕

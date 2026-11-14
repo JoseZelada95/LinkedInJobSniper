@@ -1,24 +1,36 @@
-NUMPY
-python-jobspy
-pandas
-python-dotenv
-markdown2
-pydantic
-bs4
-fake_useragent
-pypdf
-openai
+# ── Dependencias de ejecución del agente ────────────────────────────────────
+# Instalación:  pip install -r requirements.txt
+# Ordenadas por bloque funcional para que sea fácil ver para qué sirve cada una.
+
+# Scraping de ofertas
+python-jobspy            # buscador multi-sitio (LinkedIn, Indeed, Glassdoor)
+pandas                   # tratamiento tabular de las ofertas
+numpy                    # dependencia de jobspy/pandas
+beautifulsoup4           # parseo del HTML cuando hay que bajar la descripción
+requests                 # descarga HTTP directa
+fake_useragent           # cabeceras de navegador aleatorias (evita bloqueos)
+lxml                     # parser rápido que usa jobspy/BeautifulSoup
+
+# Configuración y modelos de datos
+python-dotenv            # lectura del fichero .env
+pydantic                 # validación de la salida estructurada del LLM
+
+# LLM (LangChain + cliente compatible con OpenAI → Groq por defecto)
 langchain>=0.1.0
 langchain-core>=0.1.10
 langchain-community>=0.0.10
 langchain-openai>=0.0.5
-requests
-beautifulsoup4
+openai                   # cliente base que usa langchain-openai
+
+# Lectura de PDFs (CV en Google Drive / PDFs base)
+pypdf
+pymupdf                  # PyMuPDF: generar y leer los PDFs personalizados
+
+# Google (Sheets de seguimiento + Drive para el CV)
 google-api-python-client
 google-auth
 google-auth-httplib2
 google-auth-oauthlib
-pypdf
-google-api-python-client
-google-auth
-pymupdf
+
+# Utilidades varias
+markdown2                # usado por dependencias de jobspy para descripciones

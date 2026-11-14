@@ -1,0 +1,8 @@
+# ── Dependencias de desarrollo (no se instalan en el GitHub Action) ─────────
+# Instalación:  pip install -r requirements-dev.txt
+# Ejecutar los tests:  pytest
+
+-r requirements.txt
+
+pytest>=8.0
+pytest-cov>=5.0      # cobertura: pytest --cov=job_sniper

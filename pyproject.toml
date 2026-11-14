@@ -1,0 +1,9 @@
+# ── Configuración del proyecto para herramientas de desarrollo ──────────────
+# Las dependencias se declaran en requirements.txt / requirements-dev.txt
+# (es lo que usa el GitHub Action), por eso aquí solo van ajustes de tooling.
+
+[tool.pytest.ini_options]
+# Añade la raíz del proyecto al sys.path para poder hacer `import job_sniper`.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"

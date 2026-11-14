@@ -1,41 +1,65 @@
-name: Daily Career Scout
+name: Daily Career Scout (LinkedIn Job Sniper)
 
-# Triggers
+# El agente vive en la raíz de este repositorio.
+
 on:
   schedule:
-    # 07:00 UTC = 08:00 Madrid (invierno) / 09:00 Madrid (verano)
+    # Un solo intento diario. GitHub puede retrasar los cron varias horas; el
+    # dedupe (sent_jobs.json + Sheets) evita repetidos, así que no forzamos una
+    # hora exacta. Para las 08:00 clavadas hace falta un cron externo que llame
+    # a workflow_dispatch.
     - cron: '0 7 * * *'
-  # Allows manual triggering via the 'Run workflow' button (for testing)
+  # Permite lanzarlo a mano desde la pestaña Actions (para pruebas).
   workflow_dispatch:
+
+concurrency:
+  group: linkedin-job-sniper
+  cancel-in-progress: false
 
 jobs:
   run-agent:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout code from repository
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      # 2. Set up Python environment
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      # 3. Install dependencies from requirements.txt
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4. Run the main script
+      - name: Run tests
+        run: |
+          pip install pytest
+          python -m pytest
+
+      - name: Restore sent-jobs history
+        # El runner es efímero: sin esto el historial local se pierde y el
+        # deduplicado depende solo de Google Sheets. La caché lo conserva.
+        uses: actions/cache@v4
+        with:
+          path: ~/.linkedin_job_sniper/logs
+          key: linkedin-job-sniper-history-${{ github.run_id }}
+          restore-keys: |
+            linkedin-job-sniper-history-
+
       - name: Run Job Agent
-        # Groq (free): API_KEY=gsk_xxx, API_BASE=https://api.groq.com/openai/v1, LLM_MODEL=llama-3.3-70b-versatile
         env:
           API_KEY: ${{ secrets.API_KEY }}
           API_BASE: ${{ secrets.API_BASE }}
-          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          # 8b: mucha más cuota diaria gratuita que el 70b, que agotaba las
+          # 200k TPD de Groq antes de llegar al tailoring.
+          LLM_MODEL: llama-3.1-8b-instant
+          # Menos ofertas por término y ventana más corta para no reventar la
+          # cuota. Si sobra margen, subir RESULT_LIMIT.
+          RESULT_LIMIT: '2'
+          HOURS_OLD: '24'
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
@@ -46,4 +70,93 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
           RESUME_FILE_ID: ${{ secrets.RESUME_FILE_ID }}
+          # InfoJobs (API oficial). Opcional: si falta, la fuente se omite.
+          INFOJOBS_CLIENT_ID: ${{ secrets.INFOJOBS_CLIENT_ID }}
+          INFOJOBS_CLIENT_SECRET: ${{ secrets.INFOJOBS_CLIENT_SECRET }}
         run: python main.py
+
+      - name: Prepare base CV
+        # El generador de PDFs necesita un CV base en CV_BASE_DIR. Se baja el
+        # PDF real de Drive si hay credenciales; si no, se reconstruye desde
+        # RESUME_TEXT. Así el CV personalizado conserva el formato original.
+        # Manual: el PDF re-scrapea y re-evalúa LinkedIn; en el cron diario no
+        # cabe en la cuota gratuita de Groq.
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CV_BASE_DIR: ${{ github.workspace }}/resumes
+          RESUME_TEXT: ${{ secrets.RESUME_TEXT }}
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+          RESUME_FILE_ID: ${{ secrets.RESUME_FILE_ID }}
+        run: |
+          python - <<'PY'
+          import io
+          import json
+          import os
+          from pathlib import Path
+
+          import fitz
+
+          destino = Path(os.environ["CV_BASE_DIR"])
+          destino.mkdir(parents=True, exist_ok=True)
+          pdf = destino / "cv_base.pdf"
+
+          credenciales = os.environ.get("GCP_CREDENTIALS_JSON", "")
+          file_id = os.environ.get("RESUME_FILE_ID", "")
+          if credenciales and file_id:
+              from google.oauth2 import service_account
+              from googleapiclient.discovery import build
+              from googleapiclient.http import MediaIoBaseDownload
+
+              creds = service_account.Credentials.from_service_account_info(
+                  json.loads(credenciales),
+                  scopes=["https://www.googleapis.com/auth/drive.readonly"],
+              )
+              servicio = build("drive", "v3", credentials=creds)
+              buffer = io.BytesIO()
+              descarga = MediaIoBaseDownload(buffer, servicio.files().get_media(fileId=file_id))
+              terminado = False
+              while not terminado:
+                  _, terminado = descarga.next_chunk()
+              pdf.write_bytes(buffer.getvalue())
+          else:
+              texto = os.environ.get("RESUME_TEXT", "")
+              if not texto.strip():
+                  raise SystemExit("Falta RESUME_TEXT o RESUME_FILE_ID para el CV base")
+              lineas = texto.splitlines()
+              documento = fitz.open()
+              for i in range(0, len(lineas), 55):
+                  pagina = documento.new_page()
+                  pagina.insert_textbox(
+                      fitz.Rect(40, 40, 555, 800), "\n".join(lineas[i:i + 55]), fontsize=10
+                  )
+              documento.save(pdf)
+              documento.close()
+          print(f"CV base listo: {pdf}")
+          PY
+
+      - name: Run autonomous agent (tailored CVs)
+        # Genera los PDFs adaptados con el nuevo diseño y los registra en
+        # applications.log (que se conserva en la caché de historial).
+        # Manual: el PDF re-scrapea y re-evalúa LinkedIn; en el cron diario no
+        # cabe en la cuota gratuita de Groq.
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CV_BASE_DIR: ${{ github.workspace }}/resumes
+          API_KEY: ${{ secrets.API_KEY }}
+          API_BASE: ${{ secrets.API_BASE }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}
+          RESUME_TEXT: ${{ secrets.RESUME_TEXT }}
+          CRITERIA: ${{ secrets.CRITERIA }}
+          SCORE_THRESHOLD: ${{ secrets.SCORE_THRESHOLD }}
+          INFOJOBS_CLIENT_ID: ${{ secrets.INFOJOBS_CLIENT_ID }}
+          INFOJOBS_CLIENT_SECRET: ${{ secrets.INFOJOBS_CLIENT_SECRET }}
+        run: python autonomous_agent.py --once --max-tailored 5
+
+      - name: Upload tailored CVs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailored-cvs
+          path: resumes/tailored/
+          if-no-files-found: ignore

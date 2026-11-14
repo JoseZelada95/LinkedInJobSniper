@@ -1,2 +1,22 @@
+# ── Secretos y datos locales (nunca se suben al repositorio) ──
 .env
 resumes/
+
+# ── Entornos virtuales ──
+.venv/
+venv/
+env/
+
+# ── Artefactos de Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Editores / sistema operativo ──
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
