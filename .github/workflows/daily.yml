@@ -58,9 +58,8 @@ jobs:
         env:
           API_KEY: ${{ secrets.API_KEY }}
           API_BASE: ${{ secrets.API_BASE }}
-          # 8b: mucha más cuota diaria gratuita que el 70b, que agotaba las
-          # 200k TPD de Groq antes de llegar al tailoring.
-          LLM_MODEL: llama-3.1-8b-instant
+          # Modelo validado en el repo (no hardcodear: los IDs cambian).
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
           # Menos ofertas por término y ventana más corta para no reventar la
           # cuota. Si sobra margen, subir RESULT_LIMIT.
           RESULT_LIMIT: '2'
