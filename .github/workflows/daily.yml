@@ -9,8 +9,13 @@ on:
     # hora exacta. Para las 08:00 clavadas hace falta un cron externo que llame
     # a workflow_dispatch.
     - cron: '0 7 * * *'
-  # Permite lanzarlo a mano desde la pestaña Actions (para pruebas).
+  # Manual: por defecto solo el informe (sin PDFs, que gastan más cuota).
   workflow_dispatch:
+    inputs:
+      pdfs:
+        description: "Generar PDFs adaptados (gasta más cuota Groq)"
+        type: boolean
+        default: false
 
 concurrency:
   group: linkedin-job-sniper
@@ -79,9 +84,8 @@ jobs:
         # El generador de PDFs necesita un CV base en CV_BASE_DIR. Se baja el
         # PDF real de Drive si hay credenciales; si no, se reconstruye desde
         # RESUME_TEXT. Así el CV personalizado conserva el formato original.
-        # Manual: el PDF re-scrapea y re-evalúa LinkedIn; en el cron diario no
-        # cabe en la cuota gratuita de Groq.
-        if: github.event_name == 'workflow_dispatch'
+        # El PDF re-scrapea y re-evalúa LinkedIn; solo cuando se pide a mano.
+        if: inputs.pdfs
         env:
           CV_BASE_DIR: ${{ github.workspace }}/resumes
           RESUME_TEXT: ${{ secrets.RESUME_TEXT }}
@@ -137,9 +141,8 @@ jobs:
       - name: Run autonomous agent (tailored CVs)
         # Genera los PDFs adaptados con el nuevo diseño y los registra en
         # applications.log (que se conserva en la caché de historial).
-        # Manual: el PDF re-scrapea y re-evalúa LinkedIn; en el cron diario no
-        # cabe en la cuota gratuita de Groq.
-        if: github.event_name == 'workflow_dispatch'
+        # El PDF re-scrapea y re-evalúa LinkedIn; solo cuando se pide a mano.
+        if: inputs.pdfs
         env:
           CV_BASE_DIR: ${{ github.workspace }}/resumes
           API_KEY: ${{ secrets.API_KEY }}
