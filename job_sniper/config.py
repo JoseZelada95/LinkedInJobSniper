@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -105,6 +106,12 @@ FALLBACK_MODELS: Tuple[str, ...] = (
 DEFAULT_CV_DIR = Path.home() / "Downloads" / "CVs"
 DEFAULT_LOG_DIR = Path.home() / ".linkedin_job_sniper" / "logs"
 
+# DeepSeek: fallback de pago cuando Groq agota su cuota gratuita. Off-peak es
+# la mitad de precio; el peak es 01:00-04:00 y 06:00-10:00 UTC, L-V.
+DEFAULT_DEEPSEEK_MODEL = "deepseek-flash"
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_PEAK_HOURS_UTC = ((1, 4), (6, 10))
+
 
 class ConfigurationError(Exception):
     """Configuración incompleta o inválida: impide arrancar con un mensaje claro."""
@@ -131,6 +138,17 @@ def build_fallback_models(primary_model: str) -> List[str]:
         if modelo not in modelos_unicos:  # se conserva el primer orden de aparición
             modelos_unicos.append(modelo)
     return modelos_unicos
+
+
+def deepseek_is_peak(now: Optional[datetime] = None) -> bool:
+    """¿Estamos en tarifa peak de DeepSeek? (01-04 y 06-10 UTC, L-V).
+
+    Los festivos chinos no se contemplan; para decidir coste/log es suficiente.
+    """
+    momento = now or datetime.now(timezone.utc)
+    if momento.weekday() >= 5:  # fin de semana = off-peak todo el día
+        return False
+    return any(inicio <= momento.hour < fin for inicio, fin in DEEPSEEK_PEAK_HOURS_UTC)
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -202,6 +220,12 @@ class Settings:
     infojobs_client_id: Optional[str] = None
     infojobs_client_secret: Optional[str] = None
 
+    # ── DeepSeek (fallback de pago, opcional) ──
+    # Sin clave no se usa: Groq sigue siendo el proveedor principal.
+    deepseek_api_key: Optional[str] = None
+    deepseek_base_url: str = DEFAULT_DEEPSEEK_BASE_URL
+    deepseek_model: str = DEFAULT_DEEPSEEK_MODEL
+
     @property
     def applications_log(self) -> Path:
         """Fichero donde se registran las solicitudes del agente autónomo."""
@@ -270,6 +294,10 @@ def load_settings() -> Settings:
         # InfoJobs (API oficial: registro de app en developer.infojobs.net)
         infojobs_client_id=os.getenv("INFOJOBS_CLIENT_ID") or None,
         infojobs_client_secret=os.getenv("INFOJOBS_CLIENT_SECRET") or None,
+        # DeepSeek (fallback de pago, opcional)
+        deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
+        deepseek_base_url=os.getenv("DEEPSEEK_API_BASE") or DEFAULT_DEEPSEEK_BASE_URL,
+        deepseek_model=os.getenv("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL,
     )
 
 

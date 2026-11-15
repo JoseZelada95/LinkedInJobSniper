@@ -94,3 +94,26 @@ def test_settings_es_inmutable(settings):
     """`Settings` es frozen: impedir mutaciones evita efectos secundarios entre módulos."""
     with pytest.raises(AttributeError):
         settings.score_threshold = 99
+
+
+# ── DeepSeek: configuración y tarifa ────────────────────────────────────────
+def test_load_settings_lee_deepseek_del_entorno(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-flash")
+
+    settings = load_settings()
+
+    assert settings.deepseek_api_key == "sk-test"
+    assert settings.deepseek_model == "deepseek-flash"
+    assert settings.deepseek_base_url == "https://api.deepseek.com"
+
+
+def test_deepseek_is_peak():
+    from datetime import datetime, timezone
+
+    from job_sniper.config import deepseek_is_peak
+
+    # 2026-11-16 es lunes; 2026-11-14 es sábado.
+    assert deepseek_is_peak(datetime(2026, 11, 16, 3, tzinfo=timezone.utc)) is True
+    assert deepseek_is_peak(datetime(2026, 11, 16, 11, tzinfo=timezone.utc)) is False
+    assert deepseek_is_peak(datetime(2026, 11, 14, 3, tzinfo=timezone.utc)) is False

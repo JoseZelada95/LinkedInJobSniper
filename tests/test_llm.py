@@ -97,3 +97,52 @@ def test_run_with_fallback_con_cadena_vacia(settings):
     vacio = replace(settings, fallback_models=())
 
     assert run_with_fallback("prueba", lambda m: "nunca", vacio) is None
+
+
+def test_run_with_fallback_usa_deepseek_cuando_groq_falla(settings, monkeypatch):
+    """Groq cae → se usa DeepSeek con su propio base_url y modelo."""
+    import job_sniper.llm as llm_module
+
+    llamadas = []
+
+    class _ClienteFalso:
+        def __init__(self, model, base_url):
+            self.model = model
+            self.openai_api_base = base_url
+
+    def _crear(model_name, settings, temperature=0.0, **kwargs):
+        cliente = _ClienteFalso(model_name, kwargs.get("base_url"))
+        llamadas.append(cliente)
+        return cliente
+
+    monkeypatch.setattr(llm_module, "create_chat_model", _crear)
+
+    def _accion(modelo):
+        if modelo.model in settings.fallback_models:
+            raise RuntimeError("429 rate limit")
+        return "ok-deepseek"
+
+    con_deepseek = replace(
+        settings,
+        deepseek_api_key="sk-test",
+        deepseek_model="deepseek-flash",
+        deepseek_base_url="https://api.deepseek.com",
+    )
+
+    resultado = run_with_fallback("prueba", _accion, con_deepseek)
+
+    assert resultado == "ok-deepseek"
+    assert llamadas[-1].model == "deepseek-flash"
+    assert "deepseek" in (llamadas[-1].openai_api_base or "")
+
+
+def test_sin_deepseek_api_key_no_se_prueba_deepseek(settings):
+    """Sin clave de DeepSeek la cadena sigue siendo solo Groq."""
+    modelos = []
+
+    def _accion(modelo):
+        modelos.append(modelo.model)
+        raise RuntimeError("sin cuota")
+
+    assert run_with_fallback("prueba", _accion, settings) is None
+    assert "deepseek-flash" not in modelos

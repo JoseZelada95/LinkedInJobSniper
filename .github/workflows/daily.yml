@@ -40,6 +40,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run tests
+        env:
+          # Sin trazas: los tests no deben depender de LangSmith/red.
+          LANGSMITH_TRACING: 'false'
+          LANGCHAIN_TRACING_V2: 'false'
         run: |
           pip install pytest
           python -m pytest
@@ -64,6 +68,11 @@ jobs:
           # cuota. Si sobra margen, subir RESULT_LIMIT.
           RESULT_LIMIT: '2'
           HOURS_OLD: '24'
+          # Fallback de pago cuando Groq agota su cuota. Off-peak = mitad de
+          # precio (peak: 01-04 y 06-10 UTC, L-V; el informe cae en off-peak).
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_API_BASE: https://api.deepseek.com
+          DEEPSEEK_MODEL: deepseek-flash
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
@@ -147,6 +156,9 @@ jobs:
           API_KEY: ${{ secrets.API_KEY }}
           API_BASE: ${{ secrets.API_BASE }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_API_BASE: https://api.deepseek.com
+          DEEPSEEK_MODEL: deepseek-flash
           PROXY_URL: ${{ secrets.PROXY_URL }}
           RESUME_TEXT: ${{ secrets.RESUME_TEXT }}
           CRITERIA: ${{ secrets.CRITERIA }}
