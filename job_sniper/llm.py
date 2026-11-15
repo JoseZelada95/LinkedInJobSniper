@@ -52,16 +52,6 @@ def create_chat_model(
     )
 
 
-def _close_chat_model(cliente: Optional[ChatOpenAI]) -> None:
-    """Cierra el pool HTTP del cliente para no dejarlo abierto entre intentos."""
-    raiz = getattr(cliente, "root_client", None)
-    if raiz is not None:
-        try:
-            raiz.close()
-        except Exception:  # noqa: BLE001 — cerrar nunca debe romper el flujo
-            pass
-
-
 def _llm_candidates(settings: Settings):
     """Cadena de intentos: primero Groq (gratis) y luego DeepSeek (de pago)."""
     for model in settings.fallback_models:
@@ -97,7 +87,6 @@ def run_with_fallback(
     """
     global _deepseek_tariff_logged
     for model_name, api_key, base_url, extra_body, proveedor in _llm_candidates(settings):
-        cliente: Optional[ChatOpenAI] = None
         try:
             if proveedor == "deepseek" and not _deepseek_tariff_logged:
                 logger.info(
@@ -124,8 +113,6 @@ def run_with_fallback(
                 type(exc).__name__,
                 exc,
             )
-        finally:
-            _close_chat_model(cliente)
 
     logger.error("Agotada la cadena de modelos en '%s'; se degrada el resultado", action_name)
     return None

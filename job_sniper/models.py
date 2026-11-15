@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Motivos de fallido reutilizados para no repetir literales por el código.
 SIN_DESCRIPCION = "No description"
@@ -31,6 +31,12 @@ class JobEvaluation(BaseModel):
     yoe: str = Field(
         description="Años de experiencia exigidos por la oferta, o 'Not Specified'."
     )
+
+    @field_validator("yoe", mode="before")
+    @classmethod
+    def _coerce_yoe(cls, valor):
+        """Algunos modelos devuelven `4` en vez de `"4"`: se acepta igual."""
+        return "Not Specified" if valor is None else str(valor)
 
     @classmethod
     def failed(cls, reason: str) -> "JobEvaluation":

@@ -48,3 +48,16 @@ def test_job_offer_con_bullets():
     )
 
     assert oferta.has_tailored_bullets
+
+
+def test_job_evaluation_coacciona_yoe_numerico():
+    """Groq a veces devuelve `yoe: 4` en vez de `"4"`: no debe romper el parseo."""
+    evaluacion = JobEvaluation(score=90, reason="ok", yoe=4)
+
+    assert evaluacion.yoe == "4"
+
+
+def test_job_evaluation_coacciona_yoe_nulo():
+    evaluacion = JobEvaluation(score=90, reason="ok", yoe=None)
+
+    assert evaluacion.yoe == "Not Specified"
