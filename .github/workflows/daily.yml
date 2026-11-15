@@ -4,11 +4,10 @@ name: Daily Career Scout (LinkedIn Job Sniper)
 
 on:
   schedule:
-    # Un solo intento diario. GitHub puede retrasar los cron varias horas; el
-    # dedupe (sent_jobs.json + Sheets) evita repetidos, así que no forzamos una
-    # hora exacta. Para las 08:00 clavadas hace falta un cron externo que llame
-    # a workflow_dispatch.
-    - cron: '0 7 * * *'
+    # 10:00 UTC = 11:00 Madrid (invierno) / 12:00 (verano). Queda fuera del
+    # peak de DeepSeek (01-04 y 06-10 UTC, L-V), así el fallback paga la mitad.
+    # El dedupe evita repetidos aunque GitHub retrase el cron.
+    - cron: '0 10 * * *'
   # Manual: por defecto solo el informe (sin PDFs, que gastan más cuota).
   workflow_dispatch:
     inputs:
