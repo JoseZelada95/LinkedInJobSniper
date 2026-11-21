@@ -78,7 +78,8 @@ LOCATIONS: Tuple[str, ...] = ("Madrid, Spain", "Madrid, España", "Remote")
 # Sitios que usa el informe diario (email + Sheets) y el agente autónomo.
 # `infojobs` no viene de jobspy (no lo soporta): se consulta por la API oficial
 # de InfoJobs (ver `job_sniper/infojobs.py`) y solo si hay credenciales.
-DAILY_SITES: Tuple[str, ...] = ("linkedin", "indeed", "glassdoor", "infojobs")
+# `google` = Google Jobs (agregador), también detrás de protecciones anti-bot.
+DAILY_SITES: Tuple[str, ...] = ("linkedin", "indeed", "glassdoor", "google", "infojobs")
 AGENT_SITES: Tuple[str, ...] = ("linkedin",)
 
 # ────────────────────────────────────────────────────────────────────────────

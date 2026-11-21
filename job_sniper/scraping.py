@@ -94,6 +94,7 @@ def scrape_search(
                 site_name=list(sites),
                 search_term=search_term,
                 location=location,
+                country_indeed="spain",  # si no, Indeed busca en EE.UU. (default "usa")
                 results_wanted=settings.result_limit,
                 hours_old=settings.hours_old,
                 proxies=proxies,

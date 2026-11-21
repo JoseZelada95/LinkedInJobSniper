@@ -7,7 +7,7 @@ tailors your CV for the top matches and emails you the results every morning —
 
 ## ✨ Features
 
-- 🔍 **Multi-term scraping**: 36 search terms × 3 locations (Madrid / Remote) across LinkedIn, Indeed, Glassdoor and **InfoJobs (official API)**
+- 🔍 **Multi-term scraping**: 36 search terms × 3 locations (Madrid / Remote) across LinkedIn, Indeed, Glassdoor, Google Jobs and **InfoJobs (official API)**
 - 🧠 **AI scoring**: Groq (free) + LangChain score every job 0–100 against your resume, with **automatic fallback across models**
 - ✨ **CV tailoring**: jobs scoring ≥75 get rewritten bullets that mirror the job's keywords
 - 📄 **Tailored PDFs** (optional, autonomous agent): builds a personalised PDF per offer, 100 % offline
