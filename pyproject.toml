@@ -14,7 +14,10 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+# Solo errores reales (pycodestyle E + pyflakes F). Se evitan UP/I/B para no
+# generar ruido de estilo (p. ej. `Optional[...]` → `X | None`) sobre un código
+# que usa ese estilo a propósito.
+select = ["E", "F"]
 ignore = ["E501"]  # la longitud de línea la gestiona el formateador
 
 # ── Comprobación de tipos (mypy) ─────────────────────────────────────────────

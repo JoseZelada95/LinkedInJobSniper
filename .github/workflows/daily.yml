@@ -137,26 +137,37 @@ jobs:
 
           credenciales = os.environ.get("GCP_CREDENTIALS_JSON", "")
           file_id = os.environ.get("RESUME_FILE_ID", "")
-          if credenciales and file_id:
-              from google.oauth2 import service_account
-              from googleapiclient.discovery import build
-              from googleapiclient.http import MediaIoBaseDownload
+          pdf_escrito = False
 
-              creds = service_account.Credentials.from_service_account_info(
-                  json.loads(credenciales),
-                  scopes=["https://www.googleapis.com/auth/drive.readonly"],
-              )
-              servicio = build("drive", "v3", credentials=creds)
-              buffer = io.BytesIO()
-              descarga = MediaIoBaseDownload(buffer, servicio.files().get_media(fileId=file_id))
-              terminado = False
-              while not terminado:
-                  _, terminado = descarga.next_chunk()
-              pdf.write_bytes(buffer.getvalue())
-          else:
+          # 1) Intenta descargar el CV real de Drive (conserva el formato original).
+          if credenciales and file_id:
+              try:
+                  from google.oauth2 import service_account
+                  from googleapiclient.discovery import build
+                  from googleapiclient.http import MediaIoBaseDownload
+
+                  creds = service_account.Credentials.from_service_account_info(
+                      json.loads(credenciales),
+                      scopes=["https://www.googleapis.com/auth/drive.readonly"],
+                  )
+                  servicio = build("drive", "v3", credentials=creds)
+                  buffer = io.BytesIO()
+                  descarga = MediaIoBaseDownload(buffer, servicio.files().get_media(fileId=file_id))
+                  terminado = False
+                  while not terminado:
+                      _, terminado = descarga.next_chunk()
+                  pdf.write_bytes(buffer.getvalue())
+                  pdf_escrito = True
+              except Exception as exc:  # 404, sin acceso… → fallback a RESUME_TEXT
+                  print(f"Aviso: no se pudo descargar el CV de Drive ({exc}); se usa RESUME_TEXT.")
+
+          # 2) Fallback: reconstruye el CV base desde RESUME_TEXT (texto plano).
+          if not pdf_escrito:
               texto = os.environ.get("RESUME_TEXT", "")
               if not texto.strip():
-                  raise SystemExit("Falta RESUME_TEXT o RESUME_FILE_ID para el CV base")
+                  raise SystemExit(
+                      "Falta RESUME_TEXT o un RESUME_FILE_ID válido para el CV base"
+                  )
               lineas = texto.splitlines()
               documento = fitz.open()
               for i in range(0, len(lineas), 55):
