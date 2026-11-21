@@ -37,18 +37,22 @@ def _today() -> str:
 def applications_today_count(applications_log: Path) -> int:
     """Cuenta las solicitudes registradas hoy.
 
-    Se busca la fecha ISO dentro de cada línea del log: es un formato simple y
-    robusto frente a campos extra que se añadan en el futuro.
+    Se lee el campo de timestamp (6º campo, formato `YYYY-MM-DD HH:MM:SS`) en
+    lugar de buscar la fecha como subcadena: así un `job_url` o `cv_path` que
+    casualmente contenga la fecha no produce falsos positivos.
     """
     if not applications_log.exists():
         return 0
 
     today = _today()
-    return sum(
-        1
-        for line in applications_log.read_text(encoding="utf-8").splitlines()
-        if line.strip() and today in line
-    )
+    contador = 0
+    for line in applications_log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        campos = line.split(" | ")
+        if len(campos) >= 6 and campos[5].strip().startswith(today):
+            contador += 1
+    return contador
 
 
 def load_logged_job_urls(applications_log: Path) -> List[str]:

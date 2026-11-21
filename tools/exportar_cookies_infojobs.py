@@ -6,7 +6,7 @@ Qué hace:
   2. Espera a que resuelvas el captcha manualmente (2 minutos de margen).
   3. Cuando la página muestra ofertas, imprime TODAS las cookies (incluidas
      las HttpOnly, que devtools no deja copiar fácilmente) en formato JSON.
-  4. Copia ese JSON y pégalo en el chat.
+  4. Copia ese JSON y guárdalo de forma segura (¡son credenciales de sesión!).
 
 Cómo ejecutar en tu PC (una vez):
 
@@ -50,7 +50,9 @@ def main() -> None:
         navegador.close()
 
     print()
-    print("=== PEGA ESTE JSON A TU ASISTENTE ===")
+    print("=== COOKIES EXPORTADAS (CREDENCIALES DE SESIÓN) ===")
+    print("⚠️  Estas cookies equivalen a tu acceso a InfoJobs.")
+    print("⚠️  No las pegues en chats ni asistentes; guárdalas de forma segura.")
     print(json.dumps(estado, ensure_ascii=False))
     print("=== FIN DEL JSON ===")
 

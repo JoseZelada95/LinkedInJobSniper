@@ -1,6 +1,9 @@
 # ── Secretos y datos locales (nunca se suben al repositorio) ──
 .env
 resumes/
+# Sesión/cookies de InfoJobs (credenciales de sesión) y CSV recolectado
+infojobs_session.json
+infojobs_ofertas.csv
 
 # ── Entornos virtuales ──
 .venv/

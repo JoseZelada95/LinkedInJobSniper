@@ -15,7 +15,7 @@ from typing import Optional
 
 from job_sniper.config import ConfigurationError, Settings
 from job_sniper.logging_utils import get_logger
-from job_sniper.pipeline import bootstrap_settings, run_tailoring_cycle
+from job_sniper.pipeline import bootstrap_settings, load_cached_offers, run_tailoring_cycle
 
 logger = get_logger("agent")
 
@@ -33,6 +33,11 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Máximo de PDFs personalizados a generar en esta ejecución",
+    )
+    parser.add_argument(
+        "--from-cache",
+        action="store_true",
+        help="Reutiliza las ofertas puntuadas cacheadas por el informe diario (evita re-scrapear)",
     )
     parser.add_argument(
         "--sleep-seconds",
@@ -74,9 +79,16 @@ def main(argv: Optional[list] = None) -> None:
         args.sleep_seconds,
     )
 
+    # --from-cache: reutiliza ofertas puntuadas por el informe diario del mismo
+    # run (evita re-scrapear y re-evaluar LinkedIn). Si no hay caché, se degrada.
+    scored_offers = load_cached_offers(settings) if args.from_cache else None
+    if args.from_cache and not scored_offers:
+        logger.warning("--from-cache sin caché disponible: se re-scrapea LinkedIn")
+        scored_offers = None
+
     if args.once:
         try:
-            run_tailoring_cycle(settings, max_tailored=args.max_tailored)
+            run_tailoring_cycle(settings, max_tailored=args.max_tailored, scored_offers=scored_offers)
         except Exception as exc:  # noqa: BLE001 — en modo --once informamos y salimos
             logger.error("El ciclo falló: %s", type(exc).__name__)
         logger.info("Ciclo único completado")

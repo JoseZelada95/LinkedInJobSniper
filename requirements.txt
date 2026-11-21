@@ -1,6 +1,10 @@
 # ── Dependencias de ejecución del agente ────────────────────────────────────
 # Instalación:  pip install -r requirements.txt
 # Ordenadas por bloque funcional para que sea fácil ver para qué sirve cada una.
+#
+# ⚠️  Las versiones usan rangos amplios (>=). Para un entorno reproducible,
+#     congela un lock desde un entorno validado:  pip freeze > requirements.lock
+#     y reutiliza ese fichero en CI.
 
 # Scraping de ofertas
 python-jobspy            # buscador multi-sitio (LinkedIn, Indeed, Glassdoor)

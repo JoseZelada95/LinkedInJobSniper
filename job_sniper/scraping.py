@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Sequence
 
 import pandas as pd
@@ -34,9 +35,18 @@ REQUEST_PAUSE = (2.0, 4.0)          # pausa antes de una descarga directa (parec
 REQUEST_TIMEOUT = 10                # segundos máximos de espera HTTP
 FALLBACK_TEXT_LENGTH = 5000         # longitud máxima si no se localiza el bloque de descripción
 
-# Selectores donde LinkedIn guarda el cuerpo de la descripción
-# (el primero es la versión actual; el segundo, la clásica).
-_DESCRIPTION_SELECTORS = ("show-more-less-html__markup", "description__text")
+# Paralelismo moderado del scraping: suficiente para acortar 36 términos × 3
+# ubicaciones sin disparar bloqueos por rate-limit de los portales.
+MAX_SCRAPE_WORKERS = 4
+
+# Selectores donde LinkedIn guarda el cuerpo de la descripción.
+# Se comparan por *subcadena* de clase (`class*=`), porque LinkedIn usa varias
+# clases CSS en el mismo div y las renombra con el tiempo.
+_DESCRIPTION_SELECTORS = (
+    "show-more-less-html__markup",   # versión actual
+    "description__text",             # versión clásica
+    "jobs-description__content",     # contenedor reciente de LinkedIn
+)
 
 _FALLBACK_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -117,13 +127,30 @@ def scrape_all_jobs(
     if "infojobs" in sites:
         infojobs_df = infojobs.scrape_infojobs(settings)
 
-    dataframes = [
-        scrape_search(location, term, settings, jobspy_sites)
+    dataframes: list[pd.DataFrame] = []
+    combinaciones = [
+        (location, term)
         for location in settings.locations
         for term in settings.search_terms
     ]
+
+    # Combinaciones término × ubicación consultadas en paralelo (con un tope de
+    # workers para no disparar bloqueos). Cada búsqueda conserva sus reintentos.
+    if jobspy_sites and combinaciones:
+        with ThreadPoolExecutor(max_workers=MAX_SCRAPE_WORKERS) as ejecutor:
+            futuros = {
+                ejecutor.submit(scrape_search, location, term, settings, jobspy_sites): (location, term)
+                for location, term in combinaciones
+            }
+            for futuro in as_completed(futuros):
+                dataframes.append(futuro.result())
+
     if not infojobs_df.empty:
         dataframes.append(infojobs_df)
+
+    if not dataframes:
+        logger.warning("No se obtuvo ninguna oferta en este ciclo")
+        return pd.DataFrame()
 
     combinadas = pd.concat(dataframes, ignore_index=True, sort=False)
     if combinadas.empty:
@@ -167,7 +194,8 @@ def fetch_missing_description(url: str, settings: Settings) -> str:
 
     soup = BeautifulSoup(response.text, "html.parser")
     for selector in _DESCRIPTION_SELECTORS:
-        bloque = soup.find("div", {"class": selector})
+        # `class*=` busca subcadena de clase: tolera divs con varias clases CSS.
+        bloque = soup.select_one(f"div[class*='{selector}']")
         if bloque:
             return bloque.get_text(separator="\n").strip()
 

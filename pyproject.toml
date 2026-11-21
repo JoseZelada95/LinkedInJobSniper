@@ -7,3 +7,18 @@
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+
+# ── Linter / formateador (ruff) ──────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]  # la longitud de línea la gestiona el formateador
+
+# ── Comprobación de tipos (mypy) ─────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = false

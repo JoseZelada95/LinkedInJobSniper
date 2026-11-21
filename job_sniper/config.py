@@ -13,6 +13,7 @@ globales y los efectos secundarios al importar módulos.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -152,13 +153,19 @@ def deepseek_is_peak(now: Optional[datetime] = None) -> bool:
 
 
 def _read_int_env(name: str, default: int) -> int:
-    """Lee un entero del entorno; si el valor no es numérico, usa el valor por defecto."""
+    """Lee un entero del entorno; si el valor no es numérico, avisa y usa el default."""
     raw = os.getenv(name)
     if raw is None or not raw.strip():
         return default
     try:
         return int(raw)
     except ValueError:
+        logging.getLogger(__name__).warning(
+            "Valor no numérico para %s (%r); se usa el valor por defecto %d",
+            name,
+            raw,
+            default,
+        )
         return default
 
 

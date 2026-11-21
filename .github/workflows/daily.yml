@@ -21,6 +21,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Lint + typecheck (informativo, aún no bloqueante)
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy
+          ruff check .
+          mypy job_sniper
+
   run-agent:
     runs-on: ubuntu-latest
 
@@ -44,8 +63,8 @@ jobs:
           LANGSMITH_TRACING: 'false'
           LANGCHAIN_TRACING_V2: 'false'
         run: |
-          pip install pytest
-          python -m pytest
+          pip install pytest pytest-cov
+          python -m pytest --cov=job_sniper --cov-report=term-missing
 
       - name: Restore sent-jobs history
         # El runner es efímero: sin esto el historial local se pierde y el
@@ -107,7 +126,10 @@ jobs:
           import os
           from pathlib import Path
 
-          import fitz
+          try:
+              import pymupdf as fitz  # PyMuPDF >= 1.24 expone el módulo como `pymupdf`
+          except ImportError:
+              import fitz  # versiones antiguas usan el nombre histórico
 
           destino = Path(os.environ["CV_BASE_DIR"])
           destino.mkdir(parents=True, exist_ok=True)
@@ -166,7 +188,7 @@ jobs:
           SCORE_THRESHOLD: ${{ secrets.SCORE_THRESHOLD }}
           INFOJOBS_CLIENT_ID: ${{ secrets.INFOJOBS_CLIENT_ID }}
           INFOJOBS_CLIENT_SECRET: ${{ secrets.INFOJOBS_CLIENT_SECRET }}
-        run: python autonomous_agent.py --once --max-tailored 5
+        run: python autonomous_agent.py --once --max-tailored 5 --from-cache
 
       - name: Upload tailored CVs
         if: always()

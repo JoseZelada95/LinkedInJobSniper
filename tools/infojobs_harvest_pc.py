@@ -17,7 +17,7 @@ en el primer acceso. Este script lo resuelve del único modo honesto y estable:
 
 Cómo ejecutar (en tu PC):
 
-    pip install "playwright>=1.40" beautifulsoup4 pandas
+    pip install "playwright>=1.40" beautifulsoup4 pandas python-dotenv
     python -m playwright install chromium
     python infojobs_harvest_pc.py              # primera vez: resuelve el captcha
     python infojobs_harvest_pc.py --headless   # con sesión guardada, sin ventana
@@ -42,20 +42,13 @@ from urllib.parse import quote
 
 import pandas as pd
 
-# ── Copia local de la configuración del agente (config.py) ──────────────────
-SEARCH_TERMS: tuple[str, ...] = (
-    "Desarrollador .NET",
-    "Backend .NET Developer",
-    "Desarrollador Backend C#",
-    ".NET Developer",
-    "Junior .NET Developer",
-    "Junior C# Developer",
-    "Desarrollador Java Junior",
-    "Java Spring Boot Developer",
-    "Junior Backend Developer",
-    "Junior Full Stack",
-)
-LOCATIONS: tuple[str, ...] = ("Madrid, Spain", "Remote")
+# ── Configuración del agente: SE IMPORTA de job_sniper/config.py ─────────────
+# Única fuente de verdad (36 términos): evita que esta copia local diverja.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from job_sniper.config import LOCATIONS, SEARCH_TERMS  # noqa: E402
 
 BASE = "https://www.infojobs.net"
 SEARCH_URL = BASE + "/jobsearch/search-results/list.xhtml"

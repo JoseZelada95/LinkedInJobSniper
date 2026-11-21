@@ -168,6 +168,14 @@ To change it, edit the `cron` line in `.github/workflows/daily.yml`. The history
 dedupe (Google Sheets + cached `sent_jobs.json`) prevents duplicates even if
 GitHub delays the cron.
 
+## 🔒 Privacy
+
+Your `RESUME_TEXT` and each job description are sent to the LLM provider (Groq
+by default, DeepSeek as paid fallback) for scoring and bullet tailoring. They
+are **not** committed to this repository — only the resulting scores/bullets
+are emailed to you and appended to your private Google Sheet. Use a provider you
+trust and keep all API keys in GitHub Secrets (never in the repo).
+
 ## ⚠️ Disclaimer
 
 For educational purposes only. Web scraping may violate job boards' Terms of Service.

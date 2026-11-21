@@ -10,6 +10,8 @@ Aquí se combinan los módulos anteriores sin contener lógica de negocio propia
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import List, Optional, Sequence, Set
 
@@ -121,6 +123,37 @@ def tailor_bullets_for_top(offers: Sequence[JobOffer], settings: Settings) -> No
         offer.tailored_bullets = tailor_resume_for_job(offer.title, offer.description, settings)
 
 
+SCORED_CACHE_FILENAME = "scored_offers.json"
+
+
+def cache_scored_offers(offers: Sequence[JobOffer], settings: Settings) -> Path:
+    """Persiste las ofertas ya puntuadas para reutilizarlas en el mismo run.
+
+    `main.py` (informe diario) y `autonomous_agent.py` (agente) son procesos
+    separados; esta caché evita re-scrapear y re-evaluar LinkedIn (que consume
+    cuota de LLM) cuando el workflow pide PDFs con `--from-cache`.
+    """
+    path = settings.log_dir / SCORED_CACHE_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [asdict(oferta) for oferta in offers]
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    logger.info("Ofertas puntuadas cacheadas: %d en %s", len(payload), path)
+    return path
+
+
+def load_cached_offers(settings: Settings) -> List[JobOffer]:
+    """Carga las ofertas puntuadas cacheadas, o lista vacía si no hay o está corrupta."""
+    path = settings.log_dir / SCORED_CACHE_FILENAME
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return [JobOffer(**item) for item in payload]
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        logger.warning("Caché de ofertas ilegible en %s (%s): se ignora", path, exc)
+        return []
+
+
 def run_daily_report(settings: Settings) -> None:
     """Informe diario completo: scrape → evaluar → descartar repetidas → email.
 
@@ -144,6 +177,10 @@ def run_daily_report(settings: Settings) -> None:
     if not ofertas:
         logger.warning("Sin ofertas por encima del umbral. Revisa red/proxy/umbrales.")
         return
+
+    # Se cachean las ofertas ya puntuadas para que el agente autónomo (si corre
+    # con --from-cache) no tenga que re-scrapear ni re-evaluar LinkedIn.
+    cache_scored_offers(ofertas, settings)
 
     # Red de seguridad: ofertas sin URL reconocible o carreras entre ejecuciones.
     nuevas = filter_new_offers(ofertas, claves_enviadas)
@@ -182,17 +219,27 @@ def drop_prepared_offers(offers: Sequence[JobOffer], applications_log: Path) -> 
     return filter_new_offers(offers, claves)
 
 
-def run_tailoring_cycle(settings: Settings, max_tailored: Optional[int] = None) -> None:
+def run_tailoring_cycle(
+    settings: Settings,
+    max_tailored: Optional[int] = None,
+    scored_offers: Optional[Sequence[JobOffer]] = None,
+) -> None:
     """Ciclo del agente autónomo: PDFs personalizados + registro de solicitudes.
 
     Diferencias con el informe diario:
       * Solo busca en LinkedIn (`AGENT_SITES`).
       * Genera el PDF completo (offline, sin LLM) en lugar de viñetas para email.
       * Respeta el límite diario de solicitudes (`max_applications_per_day`).
+
+    `scored_offers` (opcional) reutiliza ofertas ya puntuadas por el informe
+    diario (`--from-cache`), evitando re-scrapear y re-evaluar LinkedIn.
     """
-    ofertas = drop_prepared_offers(
-        collect_scored_offers(settings, AGENT_SITES), settings.applications_log
-    )
+    if scored_offers is None:
+        ofertas = drop_prepared_offers(
+            collect_scored_offers(settings, AGENT_SITES), settings.applications_log
+        )
+    else:
+        ofertas = drop_prepared_offers(scored_offers, settings.applications_log)
     if not ofertas:
         logger.info("Ciclo sin ofertas que superen el umbral")
         return
@@ -234,4 +281,6 @@ __all__ = [
     "tailor_bullets_for_top",
     "run_daily_report",
     "run_tailoring_cycle",
+    "cache_scored_offers",
+    "load_cached_offers",
 ]
