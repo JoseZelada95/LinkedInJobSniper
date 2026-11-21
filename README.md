@@ -13,13 +13,13 @@ tailors your CV for the top matches and emails you the results every morning —
 - 📄 **Tailored PDFs** (optional, autonomous agent): builds a personalised PDF per offer, 100 % offline
 - 📊 **Google Sheets tracker**: appends every match so you can follow your pipeline
 - 📧 **Daily email digest**: HTML email with scores, tailored bullets, YoE and Apply buttons
-- ✅ **Tested**: 85 unit tests run offline (no network, no credentials needed)
+- ✅ **Tested**: 130+ unit tests run offline (no network, no credentials needed)
 - 🔁 **No repeats**: jobs already emailed are skipped on later runs (history kept in `sent_jobs.json` and Google Sheets)
 - ☁️ **Zero cost**: GitHub Actions (free) + Groq API (free tier)
 
 ## 🚀 How It Works
 
-1. **Trigger**: runs daily at 08:00 Europe/Madrid via GitHub Actions cron (a DST-aware guard checks the local hour)
+1. **Trigger**: runs daily at 10:00 UTC (11:00/12:00 Europe/Madrid) via GitHub Actions cron — outside DeepSeek's peak window
 2. **Scrape**: fetches fresh offers for every search term × location
 3. **Deduplicate**: removes the same offer appearing in several searches
 4. **Skip repeats**: drops offers already sent in previous daily emails (local `sent_jobs.json` + URLs in your Google Sheet)
@@ -158,16 +158,15 @@ Manually update the **Estado** column as you go to track your pipeline.
 
 ## ⏰ Schedule
 
-Runs daily at **08:00 Europe/Madrid, all year round**.
+Runs daily at **10:00 UTC** (`cron: '0 10 * * *'` in `.github/workflows/daily.yml`),
+which is **11:00 Europe/Madrid in winter (CET)** and **12:00 in summer (CEST)**.
 
-GitHub Actions schedules only in UTC and has no timezone support, so the
-workflow at the repository root (`.github/workflows/linkedin-job-sniper.yml`)
-fires twice and a guard runs the agent only when the local hour in Madrid is 8:
+This time is deliberately outside DeepSeek's peak window (01:00–04:00 and
+06:00–10:00 UTC, Mon–Fri), so the paid fallback runs at half price (off-peak).
 
-- Winter (CET, UTC+1): `07:00 UTC` = `08:00 Madrid`
-- Summer (CEST, UTC+2): `06:00 UTC` = `08:00 Madrid`
-
-To change it, edit the root workflow and adjust both the crons and the guard.
+To change it, edit the `cron` line in `.github/workflows/daily.yml`. The history
+dedupe (Google Sheets + cached `sent_jobs.json`) prevents duplicates even if
+GitHub delays the cron.
 
 ## ⚠️ Disclaimer
 

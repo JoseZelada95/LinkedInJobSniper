@@ -53,7 +53,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.linkedin_job_sniper/logs
-          key: linkedin-job-sniper-history-${{ github.run_id }}
+          # Clave estable: con `run_id` nunca habría cache hit y se guardaría
+          # una entrada nueva en cada ejecución (evacuadas a los 7 días).
+          key: linkedin-job-sniper-history-v1
           restore-keys: |
             linkedin-job-sniper-history-
 

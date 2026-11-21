@@ -83,7 +83,7 @@ AGENT_SITES: Tuple[str, ...] = ("linkedin",)
 # ────────────────────────────────────────────────────────────────────────────
 # Valores por defecto (solo se sobrescriben vía variable de entorno)
 # ────────────────────────────────────────────────────────────────────────────
-DEFAULT_LLM_MODEL = "mistral"
+DEFAULT_LLM_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_RESULT_LIMIT = 8          # ofertas por término de búsqueda
 DEFAULT_HOURS_OLD = 48            # antigüedad máxima de la oferta
 DEFAULT_SCORE_THRESHOLD = 50      # puntuación mínima para aparecer en el email

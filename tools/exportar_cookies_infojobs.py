@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Exporta las cookies de InfoJobs tras resolver el captcha — ejecutar en tu PC.
 
-Qu hace:
-  1. Abre Chromium en ventana visible con la bsqueda de InfoJobs.
+Qué hace:
+  1. Abre Chromium en ventana visible con la búsqueda de InfoJobs.
   2. Espera a que resuelvas el captcha manualmente (2 minutos de margen).
-  3. Cuando la pgina muestra ofertas, imprime TODAS las cookies (incluidas
-     las HttpOnly, que devtools no deja copiar fcilmente) en formato JSON.
-  4. Copia ese JSON y pgalo en el chat.
+  3. Cuando la página muestra ofertas, imprime TODAS las cookies (incluidas
+     las HttpOnly, que devtools no deja copiar fácilmente) en formato JSON.
+  4. Copia ese JSON y pégalo en el chat.
 
-Cmo ejecutar en tu PC (una vez):
+Cómo ejecutar en tu PC (una vez):
 
     pip install "playwright>=1.40"
     python -m playwright install chromium
@@ -37,7 +37,7 @@ def main() -> None:
 
         print()
         print(">>> Abre la ventana visible: resuelve el captcha (Hacer clic para comprobar).")
-        print(">>> Cuando veas tarjetas de ofertas en la pgina, vuelve aqu al terminal.")
+        print(">>> Cuando veas tarjetas de ofertas en la página, vuelve aquí al terminal.")
         try:
             page.wait_for_selector("a[href*='of-i']", timeout=180_000)
         except Exception:
