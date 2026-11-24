@@ -156,6 +156,43 @@ def list_original_cvs(settings: Settings) -> List[Path]:
     return sorted(originales)
 
 
+def ensure_base_cv(settings: Settings) -> Optional[Path]:
+    """Garantiza que exista al menos un CV base en `cv_base_dir`.
+
+    Si ya hay PDFs originales no hace nada. Si no, reconstruye `cv_base.pdf`
+    desde `RESUME_TEXT` (texto plano), para que `tailor_cv_for_job` pueda
+    generar PDFs personalizados incluso sin CVs originales en disco (caso
+    habitual en el informe diario de GitHub Actions).
+
+    Devuelve la ruta del CV base creado, o `None` si no hay cómo obtenerlo.
+    """
+    ensure_dirs(settings)
+    if list_original_cvs(settings):
+        return None  # ya hay CVs base: no se toca nada
+
+    texto = (settings.resume_text or "").strip()
+    if not texto:
+        logger.warning(
+            "Sin CVs base en %s ni RESUME_TEXT: no se pueden generar PDFs",
+            settings.cv_base_dir,
+        )
+        return None
+
+    ruta = settings.cv_base_dir / "cv_base.pdf"
+    documento = fitz.open()
+    for i in range(0, len(texto.splitlines()), 55):
+        pagina = documento.new_page()
+        pagina.insert_textbox(
+            fitz.Rect(40, 40, 555, 800),
+            "\n".join(texto.splitlines()[i : i + 55]),
+            fontsize=10,
+        )
+    documento.save(ruta)
+    documento.close()
+    logger.info("CV base reconstruido desde RESUME_TEXT: %s", ruta)
+    return ruta
+
+
 def extract_pdf_text(path: Path) -> str:
     """Extrae todo el texto de un PDF (una línea por cambio de página)."""
     with fitz.open(path) as documento:

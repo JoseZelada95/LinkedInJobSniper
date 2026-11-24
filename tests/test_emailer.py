@@ -144,3 +144,44 @@ def test_send_email_sin_configuracion_no_envia(settings, monkeypatch):
     send_email([_oferta()], incompleto)  # email_configured → False
 
     assert llamado == []
+
+
+# ── Adjunto de PDFs ──────────────────────────────────────────────────────────
+def test_send_email_adjunta_los_pdfs(settings, tmp_path, monkeypatch):
+    """Los CVs personalizados se adjuntan como `application/pdf` al mensaje."""
+    from job_sniper import emailer as modulo_email
+
+    pdf = tmp_path / "cv_adaptado.pdf"
+    pdf.write_bytes(b"%PDF-1.4 contenido ficticio")
+
+    capturado = {}
+
+    class _FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def login(self, *args, **kwargs):
+            pass
+
+        def send_message(self, mensaje):
+            capturado["mensaje"] = mensaje
+
+    monkeypatch.setattr(modulo_email.smtplib, "SMTP_SSL", _FakeSMTP)
+
+    assert send_email([_oferta()], settings, pdf_paths=[pdf]) is True
+
+    mensaje = capturado["mensaje"]
+    adjuntos = [
+        parte
+        for parte in mensaje.get_payload()
+        if parte.get_content_type() == "application/pdf"
+    ]
+    assert len(adjuntos) == 1
+    assert adjuntos[0].get_filename() == "cv_adaptado.pdf"
+    assert adjuntos[0].get_content_type() == "application/pdf"

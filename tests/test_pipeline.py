@@ -31,7 +31,7 @@ def _preparar(monkeypatch, ofertas, enviadas):
     monkeypatch.setattr(
         pipeline,
         "send_email",
-        lambda offers, s: enviadas.append(list(offers)) or True,
+        lambda offers, s, pdf_paths=None: enviadas.append(list(offers)) or True,
     )
 
 
@@ -106,7 +106,7 @@ def test_daily_report_si_falla_el_email_no_registra_ni_exporta(settings, monkeyp
         "export_to_sheets",
         lambda offers, s: exportadas.append(list(offers)),
     )
-    monkeypatch.setattr(pipeline, "send_email", lambda offers, s: False)
+    monkeypatch.setattr(pipeline, "send_email", lambda offers, s, pdf_paths=None: False)
 
     pipeline.run_daily_report(settings)
 

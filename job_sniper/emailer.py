@@ -11,9 +11,11 @@ import html
 import re
 import smtplib
 from datetime import datetime
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Sequence
+from pathlib import Path
+from typing import Optional, Sequence
 
 from .config import Settings
 from .logging_utils import get_logger
@@ -128,8 +130,15 @@ def build_email_html(offers: Sequence[JobOffer], settings: Settings) -> str:
     </body></html>"""
 
 
-def send_email(offers: Sequence[JobOffer], settings: Settings) -> bool:
+def send_email(
+    offers: Sequence[JobOffer],
+    settings: Settings,
+    pdf_paths: Optional[Sequence[Path]] = None,
+) -> bool:
     """Envía el digesto por SMTP SSL. Nunca lanza excepción (degrada y sigue).
+
+    `pdf_paths` (opcional) adjunta los CVs personalizados en PDF generados para
+    las mejores ofertas. Un fallo al adjuntar un fichero no impide el envío.
 
     Returns:
         `True` si el email se envió; `False` si no había ofertas, faltaba
@@ -153,11 +162,28 @@ def send_email(offers: Sequence[JobOffer], settings: Settings) -> bool:
     mensaje["To"] = settings.email_receiver
     mensaje.attach(MIMEText(build_email_html(offers, settings), "html"))
 
+    # Adjuntar los CVs personalizados en PDF (si se generaron).
+    for ruta in pdf_paths or []:
+        try:
+            with open(ruta, "rb") as fichero:
+                adjunto = MIMEApplication(fichero.read(), _subtype="pdf")
+            adjunto.add_header(
+                "Content-Disposition", "attachment", filename=Path(ruta).name
+            )
+            mensaje.attach(adjunto)
+        except OSError as exc:
+            logger.warning("No se pudo adjuntar %s: %s", ruta, exc)
+
     try:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as servidor:
             servidor.login(settings.email_sender, settings.email_password)
             servidor.send_message(mensaje)
-        logger.info("Email enviado a %s (%d ofertas)", settings.email_receiver, len(offers))
+        logger.info(
+            "Email enviado a %s (%d ofertas, %d adjuntos)",
+            settings.email_receiver,
+            len(offers),
+            len(pdf_paths or []),
+        )
         return True
     except Exception as exc:  # noqa: BLE001 — SMTP puede fallar de muchas formas
         logger.error("Falló el envío del email: %s", exc)

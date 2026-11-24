@@ -154,6 +154,35 @@ def load_cached_offers(settings: Settings) -> List[JobOffer]:
         return []
 
 
+def generate_tailored_pdfs(offers: Sequence[JobOffer], settings: Settings) -> List[Path]:
+    """Genera los PDFs personalizados de las ofertas ≥ `tailor_threshold`.
+
+    Reconstruye un CV base desde `RESUME_TEXT` si no hay CVs en disco, y usa
+    `tailor_cv_for_job` para cada oferta. Devuelve las rutas de los PDFs
+    generados (para adjuntarlos al email). Nunca lanza: un fallo puntual en una
+    oferta no detiene el informe.
+    """
+    try:
+        from .pdf_generator import ensure_base_cv, tailor_cv_for_job
+    except ImportError:
+        logger.warning("PyMuPDF no disponible: no se generan PDFs para adjuntar")
+        return []
+
+    ensure_base_cv(settings)
+    rutas: List[Path] = []
+    for offer in offers:
+        if offer.score < settings.tailor_threshold:
+            continue
+        try:
+            ruta = tailor_cv_for_job(offer, settings)
+        except Exception as exc:  # noqa: BLE001 — una oferta rota no detiene el informe
+            logger.error("Error generando PDF de '%s': %s", offer.title, type(exc).__name__)
+            continue
+        if ruta:
+            rutas.append(ruta)
+    return rutas
+
+
 def run_daily_report(settings: Settings) -> None:
     """Informe diario completo: scrape → evaluar → descartar repetidas → email.
 
@@ -196,8 +225,11 @@ def run_daily_report(settings: Settings) -> None:
     top_offers = nuevas[: settings.top_jobs_limit]
     tailor_bullets_for_top(top_offers, settings)
 
+    # Genera los CVs personalizados en PDF para adjuntarlos al email.
+    pdf_paths = generate_tailored_pdfs(top_offers, settings)
+
     logger.info("%d ofertas nuevas por encima del umbral. Enviando email…", len(top_offers))
-    if not send_email(top_offers, settings):
+    if not send_email(top_offers, settings, pdf_paths):
         # Si el email falla, no se registra nada: las ofertas se reintentan mañana.
         logger.warning("Email no enviado: las ofertas quedan pendientes para la próxima ejecución")
         return
@@ -283,4 +315,5 @@ __all__ = [
     "run_tailoring_cycle",
     "cache_scored_offers",
     "load_cached_offers",
+    "generate_tailored_pdfs",
 ]
